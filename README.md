@@ -54,15 +54,26 @@ kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-add
 
 ### Option 1: Deploy from Quay.io (Recommended for OpenShift)
 
-The operator is available as a container image on Quay.io:
+The operator is available as a container image on Quay.io and can be deployed directly from GitHub:
 
 ```bash
-# Deploy on both clusters using the pre-built image
-kubectl apply -f config/rbac/
-kubectl apply -f config/manager/
+# Deploy RBAC resources
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/service_account.yaml
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role.yaml
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role_binding.yaml
+
+# Deploy operator
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/manager.yaml
 ```
 
 The deployment will automatically pull `quay.io/bmekhiss/mock-storage-operator:latest`
+
+**Or deploy everything at once:**
+```bash
+# Deploy all RBAC and manager resources
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/
+```
 
 ### Option 2: Build and Push to Quay.io
 
@@ -99,9 +110,9 @@ make docker-build IMG=localhost/mock-storage-operator:dev
 make docker-build IMG=mock-storage-operator:latest
 make minikube-load MINIKUBE_PROFILE=dr1
 
-# Deploy
-kubectl apply -f config/rbac/
-kubectl apply -f config/manager/
+# Deploy from GitHub
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/
 ```
 
 ## Setup Order
