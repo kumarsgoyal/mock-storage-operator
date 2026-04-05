@@ -6,10 +6,13 @@ import (
 
 	volsyncv1alpha1 "github.com/backube/volsync/api/v1alpha1"
 	volrep "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -51,6 +54,24 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "mock-storage-operator.dr.mock.io",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Disable cluster-wide caching for namespace-scoped resources
+				// The controller will only watch these in namespaces where VGRs exist
+				&corev1.ConfigMap{}: {
+					Field: nil, // Disable default field selector
+					Label: nil, // Disable default label selector
+				},
+				&corev1.Secret{}: {
+					Field: nil,
+					Label: nil,
+				},
+				&corev1.PersistentVolumeClaim{}: {
+					Field: nil,
+					Label: nil,
+				},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
