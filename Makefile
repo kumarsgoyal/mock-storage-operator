@@ -17,16 +17,28 @@ docker-build:
 docker-push:
 	$(CONTAINER_TOOL) push $(IMG)
 
-# Build and push to Quay.io
+# Build multi-architecture image for Quay.io (amd64 and arm64)
 quay-build:
-	$(CONTAINER_TOOL) build -t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
+	$(CONTAINER_TOOL) build --platform linux/amd64,linux/arm64 \
+		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
 
-quay-push: quay-build
-	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
+# Build and push multi-architecture image to Quay.io
+quay-push:
+	$(CONTAINER_TOOL) build --platform linux/amd64,linux/arm64 \
+		--manifest quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
+		--push .
 	@if [ "$(VERSION)" != "latest" ]; then \
-		$(CONTAINER_TOOL) tag quay.io/bmekhiss/mock-storage-operator:$(VERSION) quay.io/bmekhiss/mock-storage-operator:latest; \
-		$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:latest; \
+		$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:latest \
+			quay.io/bmekhiss/mock-storage-operator:$(VERSION); \
+		$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:latest; \
 	fi
+
+# Build for specific architecture (useful for testing)
+docker-build-amd64:
+	$(CONTAINER_TOOL) build --platform linux/amd64 -t $(IMG) .
+
+docker-build-arm64:
+	$(CONTAINER_TOOL) build --platform linux/arm64 -t $(IMG) .
 
 minikube-load:
 	@echo "Saving container image $(IMG) to tar file..."
