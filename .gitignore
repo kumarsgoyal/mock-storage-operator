@@ -1,0 +1,57 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+testbin/
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Build artifacts
+dist/
+*.tar.gz
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Kubernetes and operator artifacts
+*.kubeconfig
+kubeconfig
+
+# Test coverage
+*.cover
+coverage.html
+coverage.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.local
+
+# Compiled Object files
+*.o
+*.a
+
+# Debug files
+debug
+__debug_bin
+
+# Vendor directory (if using vendor mode)
+vendor/

@@ -1,0 +1,33 @@
+# Step 1: Deploy on the SECONDARY cluster first
+# This creates ReplicationDestinations and exposes addresses in the VGR status
+---
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  name: myapp-vgr
+  namespace: myapp
+spec:
+  # Set to secondary to create ReplicationDestinations
+  replicationState: secondary
+  
+  # Reference to the VolumeGroupReplicationClass
+  volumeGroupReplicationClassName: mock-vgr-class
+  
+  # Selector to find PVCs to protect
+  source:
+    selector:
+      matchLabels:
+        app: myapp
+  
+  # Auto-resync when in secondary mode
+  autoResync: true
+
+# After applying this:
+# 1. Wait for the VGR status to show Ready=True
+# 2. Check the operator logs for ReplicationDestination addresses and key secrets
+# 3. Copy the key secrets from secondary to primary:
+#    kubectl get secret <keySecret> -n myapp --context secondary -o yaml | kubectl apply --context primary -f -
+# 4. Update the VolumeGroupReplicationClass parameters with the addresses
+# 5. Then deploy the primary VGR
+
+# Made with Bob

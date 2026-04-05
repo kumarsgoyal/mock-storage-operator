@@ -1,0 +1,58 @@
+# VolumeGroupReplicationClass defines the configuration for the mock storage operator
+# This must be created BEFORE creating VolumeGroupReplication resources
+---
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplicationClass
+metadata:
+  annotations:
+    replication.storage.openshift.io/is-default-class: "true"
+  labels:
+    ramendr.openshift.io/groupreplicationid: mock-storage-group-id
+    ramendr.openshift.io/storageid: mock-storage-id
+    ramendr.openshift.io/global: "true"
+  name: mock-vgr-class
+spec:
+  # Provisioner name that the mock-storage-operator watches for
+  provisioner: mock.storage.io
+  
+  parameters:
+    # Scheduling interval for replication syncs (cron format or duration)
+    schedulingInterval: "5m"
+    
+    # Storage configuration for ReplicationDestinations
+    capacity: "10Gi"
+    storageClassName: "standard"
+    
+    # VolumeSnapshotClassName for snapshot-based replication (optional)
+    # If not specified, the default VolumeSnapshotClass will be used
+    volumeSnapshotClassName: "csi-snapclass"
+    
+    # Service type for exposing ReplicationDestinations
+    # Options: LoadBalancer, NodePort, ClusterIP
+    serviceType: "LoadBalancer"
+    
+    # PVC selection - mark which PVCs should be replicated
+    # Format: pvc-<pvc-name>: "true"
+    # Example for a PVC named "mysql-data":
+    pvc-mysql-data: "true"
+    
+    # Remote destination configuration (filled in AFTER secondary is deployed)
+    # These parameters are populated after the secondary VGR creates ReplicationDestinations
+    # and exposes their addresses. Copy these from the operator logs on the secondary cluster.
+    #
+    # Format: mock.storage.io/remote-address-<pvc-name>: "<address>"
+    #         mock.storage.io/remote-key-secret-<pvc-name>: "<secret-name>"
+    #
+    # Example (uncomment and fill in after secondary setup):
+    # mock.storage.io/remote-address-mysql-data: "192.168.1.100"
+    # mock.storage.io/remote-key-secret-mysql-data: "volsync-rsync-tls-dst-mockdr-mysql-data"
+
+# Setup workflow:
+# 1. Create this VGRClass on both clusters
+# 2. Deploy secondary VGR (creates ReplicationDestinations)
+# 3. Wait for secondary to be Ready and check operator logs for addresses
+# 4. Copy the key secrets from secondary to primary namespace
+# 5. Update this VGRClass with the remote-address and remote-key-secret parameters
+# 6. Deploy primary VGR (creates ReplicationSources that connect to secondary)
+
+# Made with Bob

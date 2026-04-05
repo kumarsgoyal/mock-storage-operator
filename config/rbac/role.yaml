@@ -1,0 +1,45 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mock-storage-operator-manager-role
+rules:
+  # VolumeGroupReplication CRDs
+  - apiGroups: [replication.storage.openshift.io]
+    resources: [volumegroupreplications]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [replication.storage.openshift.io]
+    resources: [volumegroupreplications/status]
+    verbs: [get, update, patch]
+  - apiGroups: [replication.storage.openshift.io]
+    resources: [volumegroupreplications/finalizers]
+    verbs: [update]
+  - apiGroups: [replication.storage.openshift.io]
+    resources: [volumegroupreplicationclasses]
+    verbs: [get, list, watch]
+  # VolSync resources
+  - apiGroups: [volsync.backube]
+    resources: [replicationsources, replicationdestinations]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # PVCs (read-only — we don't own them)
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch]
+  # Secrets (read/write — we auto-generate rsync-tls PSK secrets)
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, patch]
+  # ServiceExports (Submariner multi-cluster service discovery)
+  - apiGroups: [multicluster.x-k8s.io]
+    resources: [serviceexports]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Events
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  # Leader election
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+
+# Made with Bob

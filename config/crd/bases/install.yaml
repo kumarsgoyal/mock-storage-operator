@@ -1,0 +1,14 @@
+# VolumeGroupReplication CRDs are provided by kubernetes-csi-addons
+# Install them from the upstream project:
+#
+# kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplicationclasses.yaml
+# kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplicationcontents.yaml
+# kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplications.yaml
+#
+# Or install all CRDs from kubernetes-csi-addons:
+# kubectl apply -k "github.com/csi-addons/kubernetes-csi-addons/config/crd?ref=v0.14.0"
+#
+# The mock-storage-operator uses the VolumeGroupReplication API from kubernetes-csi-addons
+# and does not define its own CRDs.
+
+# Made with Bob

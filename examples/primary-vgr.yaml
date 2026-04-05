@@ -1,0 +1,31 @@
+# Step 2: Deploy on the PRIMARY cluster after secondary is ready
+# This creates ReplicationSources that push data to the secondary
+---
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  name: myapp-vgr
+  namespace: myapp
+spec:
+  # Set to primary to create ReplicationSources
+  replicationState: primary
+  
+  # Reference to the VolumeGroupReplicationClass
+  # Make sure the VGRClass has been updated with remote addresses from secondary
+  volumeGroupReplicationClassName: mock-vgr-class
+  
+  # Selector to find PVCs to replicate
+  source:
+    selector:
+      matchLabels:
+        app: myapp
+
+# Before applying this:
+# 1. Ensure the secondary VGR is Ready
+# 2. Copy the key secrets from secondary to primary namespace
+# 3. Update the VolumeGroupReplicationClass with the remote addresses:
+#    - mock.storage.io/remote-address-<pvc-name>
+#    - mock.storage.io/remote-key-secret-<pvc-name>
+# 4. Then apply this manifest
+
+# Made with Bob
