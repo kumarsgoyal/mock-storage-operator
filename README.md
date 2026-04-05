@@ -52,21 +52,28 @@ kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-add
 
 ## Installation
 
-### Option 1: Deploy from Quay.io (Recommended for OpenShift)
+### Option 1: Deploy from Quay.io using Kustomize (Recommended for OpenShift)
 
-The operator is available as a container image on Quay.io and can be deployed directly from GitHub:
+The operator is available as a container image on Quay.io and can be deployed directly from GitHub using Kustomize:
 
 ```bash
-# Deploy RBAC resources
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/service_account.yaml
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role.yaml
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role_binding.yaml
-
-# Deploy operator
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/manager.yaml
+# Deploy everything with one command
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
 ```
 
-The deployment will automatically pull `quay.io/bmekhiss/mock-storage-operator:latest`
+This will:
+- Create the `mock-storage-operator-system` namespace
+- Deploy all RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
+- Deploy the operator using `quay.io/bmekhiss/mock-storage-operator:latest`
+
+**Or deploy components separately:**
+```bash
+# Deploy only RBAC
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/rbac?ref=main
+
+# Deploy only manager
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/manager?ref=main
+```
 
 ### Option 2: Build and Push to Quay.io
 
@@ -103,11 +110,8 @@ make docker-build IMG=localhost/mock-storage-operator:dev
 make docker-build IMG=mock-storage-operator:latest
 make minikube-load MINIKUBE_PROFILE=dr1
 
-# Deploy from GitHub
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/service_account.yaml
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role.yaml
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role_binding.yaml
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/manager.yaml
+# Deploy using Kustomize
+kubectl apply -k config/default
 ```
 
 ## Setup Order

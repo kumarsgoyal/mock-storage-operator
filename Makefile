@@ -47,15 +47,18 @@ uninstall:
 	@echo "Run: kubectl delete -k 'github.com/csi-addons/kubernetes-csi-addons/config/crd?ref=v0.14.0'"
 
 deploy:
-	@echo "Deploying mock-storage-operator..."
+	@echo "Deploying mock-storage-operator using Kustomize..."
 	@echo "Note: Ensure VolumeGroupReplication CRDs are installed first"
 	@echo "Run: kubectl apply -k 'github.com/csi-addons/kubernetes-csi-addons/config/crd?ref=v0.14.0'"
-	kubectl apply -f config/rbac/
-	kubectl apply -f config/manager/
+	kubectl apply -k config/default
 
 undeploy:
-	kubectl delete -f config/manager/ --ignore-not-found
-	kubectl delete -f config/rbac/ --ignore-not-found
+	kubectl delete -k config/default --ignore-not-found
+
+# Deploy from GitHub using Kustomize
+deploy-github:
+	@echo "Deploying from GitHub using Kustomize..."
+	kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
 
 run:
 	go run ./cmd/main.go
