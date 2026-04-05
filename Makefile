@@ -28,12 +28,14 @@ quay-push:
 	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64
 	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
 	@echo "Creating and pushing manifest..."
+	$(CONTAINER_TOOL) manifest rm quay.io/bmekhiss/mock-storage-operator:$(VERSION) 2>/dev/null || true
 	$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
 		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
 		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
 	$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
 	@if [ "$(VERSION)" != "latest" ]; then \
 		echo "Creating and pushing latest manifest..."; \
+		$(CONTAINER_TOOL) manifest rm quay.io/bmekhiss/mock-storage-operator:latest 2>/dev/null || true; \
 		$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:latest \
 			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
 			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64; \
