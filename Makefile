@@ -17,38 +17,20 @@ docker-build:
 docker-push:
 	$(CONTAINER_TOOL) push $(IMG)
 
-# Build and push multi-architecture image to Quay.io
+# Build and push AMD64 image to Quay.io
 quay-push:
-	@echo "Building multi-architecture image for AMD64 and ARM64..."
+	@echo "Building AMD64 image..."
 	$(CONTAINER_TOOL) build --platform linux/amd64 \
-		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 .
-	$(CONTAINER_TOOL) build --platform linux/arm64 \
-		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64 .
-	@echo "Pushing architecture-specific images..."
-	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64
-	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
-	@echo "Creating and pushing manifest..."
-	$(CONTAINER_TOOL) manifest rm quay.io/bmekhiss/mock-storage-operator:$(VERSION) 2>/dev/null || true
-	$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
-		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
-		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
-	$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
+		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
+	@echo "Pushing image..."
+	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
 	@if [ "$(VERSION)" != "latest" ]; then \
-		echo "Creating and pushing latest manifest..."; \
-		$(CONTAINER_TOOL) manifest rm quay.io/bmekhiss/mock-storage-operator:latest 2>/dev/null || true; \
-		$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:latest \
-			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
-			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64; \
-		$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:latest; \
+		echo "Tagging and pushing as latest..."; \
+		$(CONTAINER_TOOL) tag quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
+			quay.io/bmekhiss/mock-storage-operator:latest; \
+		$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:latest; \
 	fi
-	@echo "Multi-architecture image pushed successfully!"
-
-# Build for specific architecture (useful for testing)
-docker-build-amd64:
-	$(CONTAINER_TOOL) build --platform linux/amd64 -t $(IMG) .
-
-docker-build-arm64:
-	$(CONTAINER_TOOL) build --platform linux/arm64 -t $(IMG) .
+	@echo "Image pushed successfully!"
 
 minikube-load:
 	@echo "Saving container image $(IMG) to tar file..."

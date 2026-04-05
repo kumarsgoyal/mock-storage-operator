@@ -43,8 +43,10 @@ type VolumeGroupReplicationReconciler struct {
 // +kubebuilder:rbac:groups=volsync.backube,resources=replicationsources,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=volsync.backube,resources=replicationdestinations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=multicluster.x-k8s.io,resources=serviceexports,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -387,12 +389,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
 	logger.V(1).Info("Reconciling as secondary")
 
-	// Get ConfigMap name from VGRClass parameters
-	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
-	if configMapName == "" {
-		logger.Error(fmt.Errorf("pvcConfigMap parameter not set"), "VGRClass must specify pvcConfigMap parameter")
-		return ctrl.Result{}, fmt.Errorf("pvcConfigMap parameter not set in VGRClass")
-	}
+	configMapName := "mock-configmap"
 
 	// Get the ConfigMap
 	configMap := &corev1.ConfigMap{}
