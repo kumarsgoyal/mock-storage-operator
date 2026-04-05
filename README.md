@@ -52,21 +52,35 @@ kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-add
 
 ## Installation
 
-### Option 1: Deploy from Quay.io using Kustomize (Recommended for OpenShift)
+### Quick Start: Deploy from Quay.io (Recommended)
 
-The operator is available as a container image on Quay.io and can be deployed directly from GitHub using Kustomize:
+The operator is available as a multi-architecture container image on Quay.io and can be deployed with a single command using Kustomize:
 
 ```bash
-# Deploy everything with one command
+# Deploy on both clusters (primary and secondary)
 kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
 ```
 
-This will:
-- Create the `mock-storage-operator-system` namespace
-- Deploy all RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
-- Deploy the operator using `quay.io/bmekhiss/mock-storage-operator:latest`
+**What this does:**
+- ✅ Creates `mock-storage-operator-system` namespace
+- ✅ Deploys RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
+- ✅ Deploys the operator using `quay.io/bmekhiss/mock-storage-operator:latest`
+- ✅ Supports both AMD64 (x86_64) and ARM64 architectures
 
-**Or deploy components separately:**
+**Verify deployment:**
+```bash
+# Check operator is running
+kubectl get pods -n mock-storage-operator-system
+
+# Check logs
+kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator -f
+```
+
+### Alternative Deployment Options
+
+<details>
+<summary><b>Option 1: Deploy Components Separately</b></summary>
+
 ```bash
 # Deploy only RBAC
 kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/rbac?ref=main
@@ -74,23 +88,44 @@ kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/rbac?
 # Deploy only manager
 kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/manager?ref=main
 ```
+</details>
 
-### Option 2: Build and Push to Quay.io
+<details>
+<summary><b>Option 2: Deploy from Local Clone</b></summary>
 
-If you want to build and push your own version:
+```bash
+# Clone the repository
+git clone https://github.com/BenamarMk/mock-storage-operator.git
+cd mock-storage-operator
+
+# Deploy using local Kustomize configs
+kubectl apply -k config/default
+```
+</details>
+
+<details>
+<summary><b>Option 3: Build and Push Your Own Image</b></summary>
 
 ```bash
 # Login to Quay.io
 podman login quay.io
 
-# Build and push (will tag both VERSION and latest)
-make quay-push VERSION=v0.1.0
+# Clean up any existing local images (important!)
+podman rmi quay.io/bmekhiss/mock-storage-operator:v0.1.0 2>/dev/null || true
+podman rmi quay.io/bmekhiss/mock-storage-operator:latest 2>/dev/null || true
 
-# Or just build without pushing
-make quay-build VERSION=v0.1.0
+# Build and push multi-architecture image (AMD64 + ARM64)
+make quay-push VERSION=v0.1.0
 ```
 
-### Option 3: Local Development
+This creates:
+- `quay.io/bmekhiss/mock-storage-operator:v0.1.0` (multi-arch manifest)
+- `quay.io/bmekhiss/mock-storage-operator:latest` (multi-arch manifest)
+- Architecture-specific images: `v0.1.0-amd64` and `v0.1.0-arm64`
+</details>
+
+<details>
+<summary><b>Option 4: Local Development</b></summary>
 
 ```bash
 # Build locally
@@ -102,8 +137,10 @@ make run
 # Or build container image for local testing
 make docker-build IMG=localhost/mock-storage-operator:dev
 ```
+</details>
 
-### Option 4: Deploy to Minikube
+<details>
+<summary><b>Option 5: Deploy to Minikube</b></summary>
 
 ```bash
 # Build and load into Minikube
@@ -112,6 +149,17 @@ make minikube-load MINIKUBE_PROFILE=dr1
 
 # Deploy using Kustomize
 kubectl apply -k config/default
+```
+</details>
+
+### Uninstall
+
+```bash
+# Remove the operator
+kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
+
+# Or using make
+make undeploy
 ```
 
 ## Setup Order
