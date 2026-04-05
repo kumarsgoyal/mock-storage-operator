@@ -24,8 +24,8 @@ spec:
       serviceAccountName: mock-storage-operator-controller-manager
       containers:
         - name: manager
-          image: localhost/mock-storage-operator:latest
-          imagePullPolicy: IfNotPresent
+          image: quay.io/bmekhiss/mock-storage-operator:latest
+          imagePullPolicy: Always
           command: [/manager]
           args:
             - --leader-elect

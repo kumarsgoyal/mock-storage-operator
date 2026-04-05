@@ -1,17 +1,36 @@
-.PHONY: build docker-build minikube-load deploy undeploy install uninstall
+.PHONY: build docker-build docker-push quay-build quay-push minikube-load deploy undeploy install uninstall
 
-IMG ?= mock-storage-operator:latest
+# Image URL to use for building/pushing image targets
+IMG ?= quay.io/bmekhiss/mock-storage-operator:latest
+VERSION ?= latest
 MINIKUBE_PROFILE ?= dr2
+
+# Container tool to use (podman or docker)
+CONTAINER_TOOL ?= podman
 
 build:
 	go build -o bin/manager ./cmd/main.go
 
 docker-build:
-	podman build -t $(IMG) .
+	$(CONTAINER_TOOL) build -t $(IMG) .
+
+docker-push:
+	$(CONTAINER_TOOL) push $(IMG)
+
+# Build and push to Quay.io
+quay-build:
+	$(CONTAINER_TOOL) build -t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
+
+quay-push: quay-build
+	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
+	@if [ "$(VERSION)" != "latest" ]; then \
+		$(CONTAINER_TOOL) tag quay.io/bmekhiss/mock-storage-operator:$(VERSION) quay.io/bmekhiss/mock-storage-operator:latest; \
+		$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:latest; \
+	fi
 
 minikube-load:
-	@echo "Saving Podman image $(IMG) to tar file..."
-	podman save $(IMG) -o /tmp/mock-storage-operator.tar
+	@echo "Saving container image $(IMG) to tar file..."
+	$(CONTAINER_TOOL) save $(IMG) -o /tmp/mock-storage-operator.tar
 	@echo "Loading image into Minikube profile $(MINIKUBE_PROFILE)..."
 	minikube -p $(MINIKUBE_PROFILE) image load /tmp/mock-storage-operator.tar
 	@echo "Cleaning up tar file..."

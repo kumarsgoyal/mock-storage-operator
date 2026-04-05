@@ -52,16 +52,56 @@ kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-add
 
 ## Installation
 
-Deploy the mock-storage-operator on both clusters:
+### Option 1: Deploy from Quay.io (Recommended for OpenShift)
+
+The operator is available as a container image on Quay.io:
 
 ```bash
-# Build and deploy
-make docker-build docker-push IMG=<your-registry>/mock-storage-operator:latest
-make deploy IMG=<your-registry>/mock-storage-operator:latest
+# Deploy on both clusters using the pre-built image
+kubectl apply -f config/rbac/
+kubectl apply -f config/manager/
+```
 
-# Or for local development
-make install  # Install CRDs
-make run      # Run locally
+The deployment will automatically pull `quay.io/bmekhiss/mock-storage-operator:latest`
+
+### Option 2: Build and Push to Quay.io
+
+If you want to build and push your own version:
+
+```bash
+# Login to Quay.io
+podman login quay.io
+
+# Build and push (will tag both VERSION and latest)
+make quay-push VERSION=v0.1.0
+
+# Or just build without pushing
+make quay-build VERSION=v0.1.0
+```
+
+### Option 3: Local Development
+
+```bash
+# Build locally
+make build
+
+# Run locally (requires kubeconfig)
+make run
+
+# Or build container image for local testing
+make docker-build IMG=localhost/mock-storage-operator:dev
+```
+
+### Option 4: Deploy to Minikube
+
+```bash
+# Build and load into Minikube
+make docker-build IMG=mock-storage-operator:latest
+make minikube-load MINIKUBE_PROFILE=dr1
+
+# Deploy
+kubectl apply -f config/rbac/
+kubectl apply -f config/manager/
 ```
 
 ## Setup Order
