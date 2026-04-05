@@ -277,7 +277,8 @@ func (v *VSHandler) createOrUpdateRS(
 	return rs, nil
 }
 
-// validateSecretAndAddOwnerRef validates that a secret exists, creates it if not found, and adds owner reference
+// validateSecretAndAddOwnerRef validates that a secret exists and adds owner reference
+// The secret must be pre-created by the user
 func (v *VSHandler) validateSecretAndAddOwnerRef(secretName string) (bool, error) {
 	secret := &corev1.Secret{}
 
@@ -287,32 +288,14 @@ func (v *VSHandler) validateSecretAndAddOwnerRef(secretName string) (bool, error
 			Namespace: v.owner.GetNamespace(),
 		}, secret)
 	if err != nil {
-		if !kerrors.IsNotFound(err) {
-			v.log.Error(err, "Failed to get secret", "secretName", secretName)
-			return false, fmt.Errorf("error getting secret (%w)", err)
+		if kerrors.IsNotFound(err) {
+			v.log.Error(err, "Secret not found - must be pre-created", "secretName", secretName)
+			return false, fmt.Errorf("secret %s not found in namespace %s - must be created before replication",
+				secretName, v.owner.GetNamespace())
 		}
-
-		// Secret not found - create it
-		v.log.Info("Secret not found, creating new VolSync PSK secret", "secretName", secretName)
 		
-		newSecret, err := v.generateVolSyncReplicationSecret(secretName)
-		if err != nil {
-			return false, err
-		}
-
-		if err := ctrl.SetControllerReference(v.owner, newSecret, v.client.Scheme()); err != nil {
-			v.log.Error(err, "unable to set controller reference on secret")
-			return false, fmt.Errorf("%w", err)
-		}
-
-		err = v.client.Create(v.ctx, newSecret)
-		if err != nil {
-			v.log.Error(err, "Error creating secret", "secretName", secretName)
-			return false, fmt.Errorf("error creating secret for volsync (%w)", err)
-		}
-
-		v.log.Info("Created new VolSync PSK secret", "secretName", secretName)
-		return true, nil
+		v.log.Error(err, "Failed to get secret", "secretName", secretName)
+		return false, fmt.Errorf("error getting secret (%w)", err)
 	}
 
 	v.log.Info("Secret exists", "secretName", secretName)
