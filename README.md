@@ -68,13 +68,6 @@ kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operat
 
 The deployment will automatically pull `quay.io/bmekhiss/mock-storage-operator:latest`
 
-**Or deploy everything at once:**
-```bash
-# Deploy all RBAC and manager resources
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/
-```
-
 ### Option 2: Build and Push to Quay.io
 
 If you want to build and push your own version:
@@ -111,8 +104,10 @@ make docker-build IMG=mock-storage-operator:latest
 make minikube-load MINIKUBE_PROFILE=dr1
 
 # Deploy from GitHub
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/
-kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/service_account.yaml
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role.yaml
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/rbac/role_binding.yaml
+kubectl apply -f https://raw.githubusercontent.com/BenamarMk/mock-storage-operator/main/config/manager/manager.yaml
 ```
 
 ## Setup Order
