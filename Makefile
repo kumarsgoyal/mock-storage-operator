@@ -17,21 +17,29 @@ docker-build:
 docker-push:
 	$(CONTAINER_TOOL) push $(IMG)
 
-# Build multi-architecture image for Quay.io (amd64 and arm64)
-quay-build:
-	$(CONTAINER_TOOL) build --platform linux/amd64,linux/arm64 \
-		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
-
 # Build and push multi-architecture image to Quay.io
 quay-push:
-	$(CONTAINER_TOOL) build --platform linux/amd64,linux/arm64 \
-		--manifest quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
-		--push .
+	@echo "Building multi-architecture image for AMD64 and ARM64..."
+	$(CONTAINER_TOOL) build --platform linux/amd64 \
+		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 .
+	$(CONTAINER_TOOL) build --platform linux/arm64 \
+		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64 .
+	@echo "Pushing architecture-specific images..."
+	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64
+	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
+	@echo "Creating and pushing manifest..."
+	$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:$(VERSION) \
+		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
+		quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64
+	$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
 	@if [ "$(VERSION)" != "latest" ]; then \
+		echo "Creating and pushing latest manifest..."; \
 		$(CONTAINER_TOOL) manifest create quay.io/bmekhiss/mock-storage-operator:latest \
-			quay.io/bmekhiss/mock-storage-operator:$(VERSION); \
+			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-amd64 \
+			quay.io/bmekhiss/mock-storage-operator:$(VERSION)-arm64; \
 		$(CONTAINER_TOOL) manifest push quay.io/bmekhiss/mock-storage-operator:latest; \
 	fi
+	@echo "Multi-architecture image pushed successfully!"
 
 # Build for specific architecture (useful for testing)
 docker-build-amd64:
