@@ -2,6 +2,14 @@
 
 A Kubernetes operator that acts as a **mock storage vendor** implementing the VolumeGroupReplication API for DR testing with Ramen. It uses VolSync internally for actual data replication while presenting a storage-vendor-like interface to Ramen.
 
+## 📚 Documentation
+
+- **[Deployment Steps](docs/DEPLOYMENT_STEPS.md)** - Step-by-step deployment guide from prerequisites to testing
+- **[VGR Creation Guide](docs/VGR_CREATION_GUIDE.md)** - Detailed guide for creating VGR resources with ConfigMap
+- **[User Guide](docs/USER_GUIDE.md)** - Complete guide with installation, configuration, and troubleshooting
+- **[VGR Quick Reference](docs/VGR_QUICK_REFERENCE.md)** - Quick reference for creating VolumeGroupReplication resources
+- **[Examples](examples/)** - YAML examples for ConfigMap, VGRClass and VGR resources
+
 ## Purpose
 
 This operator allows Ramen to test its agnostic DR solution without requiring actual storage vendor hardware. It reconciles `VolumeGroupReplication` CRs (from replication.storage.io API) and uses VolSync ReplicationSource/ReplicationDestination resources internally to perform the actual data replication.

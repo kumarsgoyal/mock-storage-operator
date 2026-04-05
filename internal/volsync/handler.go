@@ -23,16 +23,16 @@ import (
 const (
 	// VRGOwnerLabel is used to label VolSync resources with their owner
 	VRGOwnerLabel = "volumegroupreplication-owner"
-	
+
 	// SchedulingIntervalMinLength is the minimum length for scheduling interval
 	SchedulingIntervalMinLength = 2
-	
+
 	// CronSpecMaxDayOfMonth is the maximum day of month for cron spec
 	CronSpecMaxDayOfMonth = 28
-	
+
 	// tlsPSKDataSize is the size of the TLS pre-shared key data
 	tlsPSKDataSize = 64
-	
+
 	// ServiceExport constants for Submariner
 	ServiceExportKind    = "ServiceExport"
 	ServiceExportGroup   = "multicluster.x-k8s.io"
@@ -42,7 +42,7 @@ const (
 var (
 	// DefaultScheduleCronSpec is the default schedule for replication
 	DefaultScheduleCronSpec = "*/5 * * * *" // Every 5 mins
-	
+
 	// DefaultRsyncServiceType is ClusterIP for use with Submariner
 	DefaultRsyncServiceType corev1.ServiceType = corev1.ServiceTypeClusterIP
 )
@@ -293,7 +293,7 @@ func (v *VSHandler) validateSecretAndAddOwnerRef(secretName string) (bool, error
 			return false, fmt.Errorf("secret %s not found in namespace %s - must be created before replication",
 				secretName, v.owner.GetNamespace())
 		}
-		
+
 		v.log.Error(err, "Failed to get secret", "secretName", secretName)
 		return false, fmt.Errorf("error getting secret (%w)", err)
 	}
@@ -541,7 +541,7 @@ func ConvertSchedulingIntervalToCronSpec(schedulingInterval string) (*string, er
 
 	mhd := schedulingInterval[len(schedulingInterval)-1:]
 	mhd = string([]rune(mhd)[0]) // Get first character
-	
+
 	// Convert to lowercase
 	if mhd == "M" {
 		mhd = "m"
@@ -616,4 +616,3 @@ func genTLSPreSharedKey(log logr.Logger) (string, error) {
 
 	return hex.EncodeToString(pskData), nil
 }
-

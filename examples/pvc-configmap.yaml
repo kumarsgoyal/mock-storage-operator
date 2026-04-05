@@ -1,0 +1,22 @@
+# ConfigMap for PVC configuration
+# This ConfigMap defines the configuration for each PVC that should be replicated
+# The secondary cluster reads this ConfigMap to create ReplicationDestinations
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pvc-config
+  namespace: myapp
+data:
+  # Format: "pvc=<pvc-name>/<namespace>": "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+  
+  # Example 1: MySQL data PVC with 3-minute sync interval
+  "pvc=mock-pvc-test/myapp": "schedulingInterval=3m:storageClassName=rook-cephfs-fs1:volumeSnapshotClassName=csi-cephfsplugin-snapclass"
+  
+  # Example 2: PostgreSQL data PVC with 10-minute sync interval
+  "pvc=mock-pvc2-test/myapp": "schedulingInterval=10m:storageClassName=rook-cephfs-fs1:volumeSnapshotClassName=csi-cephfsplugin-snapclass"
+  
+  # Add more PVC configurations as needed
+  # "pvc=<another-pvc>/<namespace>": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+
+# Made with Bob

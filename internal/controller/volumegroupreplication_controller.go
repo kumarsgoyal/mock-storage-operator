@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	volsyncv1alpha1 "github.com/backube/volsync/api/v1alpha1"
@@ -43,6 +44,7 @@ type VolumeGroupReplicationReconciler struct {
 // +kubebuilder:rbac:groups=volsync.backube,resources=replicationdestinations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -212,6 +214,68 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 
 // ── SECONDARY ────────────────────────────────────────────────────────────────
 
+// PVCConfig holds the parsed configuration for a single PVC
+type PVCConfig struct {
+	Name                    string
+	Namespace               string
+	SchedulingInterval      string
+	StorageClassName        string
+	VolumeSnapshotClassName string
+}
+
+// parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
+// Expected format:
+// Key: "pvc=<pvc-name>/<namespace>"
+// Value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Logger) ([]PVCConfig, error) {
+	configs := []PVCConfig{}
+
+	for key, value := range configMapData {
+		// Parse key: "pvc=<pvc-name>/<namespace>"
+		if !strings.HasPrefix(key, "pvc=") {
+			continue
+		}
+
+		// Remove "pvc=" prefix
+		pvcInfo := strings.TrimPrefix(key, "pvc=")
+		parts := strings.Split(pvcInfo, "/")
+		if len(parts) != 2 {
+			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc=<name>/<namespace>'", "key", key)
+			continue
+		}
+
+		pvcName := parts[0]
+		namespace := parts[1]
+
+		// Parse value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+		config := PVCConfig{
+			Name:      pvcName,
+			Namespace: namespace,
+		}
+
+		valueParts := strings.Split(value, ":")
+		for _, part := range valueParts {
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+
+			switch kv[0] {
+			case "schedulingInterval":
+				config.SchedulingInterval = kv[1]
+			case "storageClassName":
+				config.StorageClassName = kv[1]
+			case "volumeSnapshotClassName":
+				config.VolumeSnapshotClassName = kv[1]
+			}
+		}
+
+		configs = append(configs, config)
+	}
+
+	return configs, nil
+}
+
 func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	ctx context.Context,
 	logger logr.Logger,
@@ -221,58 +285,71 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
 	logger.V(1).Info("Reconciling as secondary")
 
-	// Get PVCs based on selector (or use parameters to determine which PVCs to protect)
-	pvcNames := []string{}
-
-	// Extract PVC names from VGRClass parameters (pvc-<name>: "true")
-	for key, value := range vgrClass.Spec.Parameters {
-		if value == "true" && len(key) > 4 && key[:4] == "pvc-" {
-			pvcName := key[4:] // Remove "pvc-" prefix
-			pvcNames = append(pvcNames, pvcName)
-		}
+	// Get ConfigMap name from VGRClass parameters
+	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
+	if configMapName == "" {
+		logger.Error(fmt.Errorf("pvcConfigMap parameter not set"), "VGRClass must specify pvcConfigMap parameter")
+		return ctrl.Result{}, fmt.Errorf("pvcConfigMap parameter not set in VGRClass")
 	}
 
-	if len(pvcNames) == 0 {
-		logger.Info("No PVCs configured in VGRClass parameters")
-		return ctrl.Result{RequeueAfter: requeueInterval}, nil
-	}
-
-	// Create VolSync handler
-	schedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
-	if schedulingInterval == "" {
-		schedulingInterval = vgrClass.Spec.Parameters["schedule"]
-	}
-	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, schedulingInterval)
-
-	// Get configuration from VGRClass
-	capacity := vgrClass.Spec.Parameters["capacity"]
-	if capacity == "" {
-		capacity = "1Gi"
-	}
-	capacityQuantity, err := resource.ParseQuantity(capacity)
-	if err != nil {
-		logger.Error(err, "Failed to parse capacity", "capacity", capacity)
+	// Get the ConfigMap
+	configMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: vgr.Namespace}, configMap); err != nil {
+		logger.Error(err, "Failed to get ConfigMap", "configMap", configMapName, "namespace", vgr.Namespace)
 		return ctrl.Result{}, err
 	}
 
-	storageClassName := vgrClass.Spec.Parameters["storageClassName"]
-	serviceType := volsync.DefaultRsyncServiceType
+	// Parse PVC configurations from ConfigMap
+	pvcConfigs, err := parsePVCConfigFromConfigMap(configMap.Data, logger)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
+	if len(pvcConfigs) == 0 {
+		logger.Info("No PVC configurations found in ConfigMap", "configMap", configMapName)
+		return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	}
+
+	logger.Info("Found PVC configurations", "count", len(pvcConfigs), "configMap", configMapName)
+
+	// Get default capacity from VGRClass parameters
+	defaultCapacity := vgrClass.Spec.Parameters["capacity"]
+	if defaultCapacity == "" {
+		defaultCapacity = "1Gi"
+	}
+
+	// Get PSK secret name from parameters or use default
+	pskSecretName := vgrClass.Spec.Parameters["pskSecretName"]
+	if pskSecretName == "" {
+		pskSecretName = "volsync-rsync-tls-" + vgr.Name
+	}
+
+	serviceType := volsync.DefaultRsyncServiceType
 	protectedPVCs := []corev1.LocalObjectReference{}
 	allReady := true
 
-	for _, pvcName := range pvcNames {
-		// Get PSK secret name from parameters or use default
-		pskSecretName := vgrClass.Spec.Parameters["pskSecretName"]
-		if pskSecretName == "" {
-			pskSecretName = "volsync-rsync-tls-" + vgr.Name
+	for _, pvcConfig := range pvcConfigs {
+		// Verify the PVC is in the same namespace as the VGR
+		if pvcConfig.Namespace != vgr.Namespace {
+			logger.Info("Skipping PVC from different namespace", "pvc", pvcConfig.Name, "pvcNamespace", pvcConfig.Namespace, "vgrNamespace", vgr.Namespace)
+			continue
 		}
 
-		// Use VolSync handler to reconcile ReplicationDestination (like Ramen's ReconcileRD)
+		// Create VolSync handler with per-PVC scheduling interval
+		vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, pvcConfig.SchedulingInterval)
+
+		// Parse capacity
+		capacityQuantity, err := resource.ParseQuantity(defaultCapacity)
+		if err != nil {
+			logger.Error(err, "Failed to parse capacity", "capacity", defaultCapacity)
+			return ctrl.Result{}, err
+		}
+
+		// Use VolSync handler to reconcile ReplicationDestination
 		rd, err := vsHandler.ReconcileRD(
-			pvcName,
+			pvcConfig.Name,
 			&capacityQuantity,
-			&storageClassName,
+			&pvcConfig.StorageClassName,
 			[]corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			pskSecretName,
 			&serviceType,
@@ -287,13 +364,13 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 			continue
 		}
 
-		protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvcName})
+		protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvcConfig.Name})
 
 		// Log the address and key secret for user to copy to primary
 		if rd.Status != nil && rd.Status.RsyncTLS != nil {
 			if rd.Status.RsyncTLS.Address != nil && rd.Status.RsyncTLS.KeySecret != nil {
 				logger.Info("ReplicationDestination ready",
-					"pvc", pvcName,
+					"pvc", pvcConfig.Name,
 					"address", *rd.Status.RsyncTLS.Address,
 					"keySecret", *rd.Status.RsyncTLS.KeySecret)
 			}

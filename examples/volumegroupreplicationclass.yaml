@@ -16,43 +16,34 @@ spec:
   provisioner: mock.storage.io
   
   parameters:
-    # Scheduling interval for replication syncs (cron format or duration)
-    schedulingInterval: "5m"
-    
-    # Storage configuration for ReplicationDestinations
+    # Default capacity for ReplicationDestinations
     capacity: "10Gi"
-    storageClassName: "standard"
     
-    # VolumeSnapshotClassName for snapshot-based replication (optional)
-    # If not specified, the default VolumeSnapshotClass will be used
-    volumeSnapshotClassName: "csi-snapclass"
+    # PSK secret name for rsync-tls authentication (optional)
+    # If not specified, defaults to "volsync-rsync-tls-<vgr-name>"
+    # pskSecretName: "my-custom-secret"
     
-    # Service type for exposing ReplicationDestinations
-    # Options: LoadBalancer, NodePort, ClusterIP
-    serviceType: "LoadBalancer"
-    
-    # PVC selection - mark which PVCs should be replicated
-    # Format: pvc-<pvc-name>: "true"
-    # Example for a PVC named "mysql-data":
-    pvc-mysql-data: "true"
-    
-    # Remote destination configuration (filled in AFTER secondary is deployed)
-    # These parameters are populated after the secondary VGR creates ReplicationDestinations
-    # and exposes their addresses. Copy these from the operator logs on the secondary cluster.
-    #
-    # Format: mock.storage.io/remote-address-<pvc-name>: "<address>"
-    #         mock.storage.io/remote-key-secret-<pvc-name>: "<secret-name>"
-    #
-    # Example (uncomment and fill in after secondary setup):
-    # mock.storage.io/remote-address-mysql-data: "192.168.1.100"
-    # mock.storage.io/remote-key-secret-mysql-data: "volsync-rsync-tls-dst-mockdr-mysql-data"
+    # ConfigMap name containing PVC configurations (required for secondary)
+    # The ConfigMap should be in the same namespace as the VGR
+    # See examples/pvc-configmap.yaml for the expected format
+    pvcConfigMap: "pvc-config"
 
 # Setup workflow:
-# 1. Create this VGRClass on both clusters
-# 2. Deploy secondary VGR (creates ReplicationDestinations)
-# 3. Wait for secondary to be Ready and check operator logs for addresses
-# 4. Copy the key secrets from secondary to primary namespace
-# 5. Update this VGRClass with the remote-address and remote-key-secret parameters
-# 6. Deploy primary VGR (creates ReplicationSources that connect to secondary)
+# 1. Create PSK secret on both clusters (must exist before deployment):
+#    kubectl create secret generic volsync-rsync-tls-secret \
+#      --from-literal=psk.txt="$(openssl rand -base64 48)" \
+#      -n <namespace>
+#
+# 2. Create PVC ConfigMap on secondary cluster (see examples/pvc-configmap.yaml):
+#    kubectl apply -f examples/pvc-configmap.yaml
+#
+# 3. Create this VGRClass on both clusters
+#
+# 4. Deploy secondary VGR (creates ReplicationDestinations with ServiceExport)
+#
+# 5. Deploy primary VGR (creates ReplicationSources that connect via Submariner)
+#
+# Note: With Submariner, no manual address configuration needed!
+# Services are automatically discovered via clusterset.local domain
 
 # Made with Bob
