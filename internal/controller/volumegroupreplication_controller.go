@@ -139,12 +139,39 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		return ctrl.Result{}, err
 	}
 
-	// Create VolSync handler
-	schedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
-	if schedulingInterval == "" {
-		schedulingInterval = vgrClass.Spec.Parameters["schedule"]
+	// Get default configuration from VGRClass
+	defaultSchedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
+	if defaultSchedulingInterval == "" {
+		defaultSchedulingInterval = vgrClass.Spec.Parameters["schedule"]
+		if defaultSchedulingInterval == "" {
+			defaultSchedulingInterval = "5m" // Default to 5 minutes
+		}
 	}
-	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, schedulingInterval)
+
+	defaultStorageClassName := vgrClass.Spec.Parameters["storageClassName"]
+	if defaultStorageClassName == "" {
+		defaultStorageClassName = "standard"
+	}
+
+	defaultVolumeSnapshotClassName := vgrClass.Spec.Parameters["volumeSnapshotClassName"]
+	if defaultVolumeSnapshotClassName == "" {
+		defaultVolumeSnapshotClassName = "csi-snapclass"
+	}
+
+	// Create or update ConfigMap with PVC entries
+	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
+	if configMapName == "" {
+		configMapName = "pvc-config"
+	}
+
+	if err := r.reconcilePVCConfigMap(ctx, logger, vgr, pvcList, configMapName,
+		defaultSchedulingInterval, defaultStorageClassName, defaultVolumeSnapshotClassName); err != nil {
+		logger.Error(err, "Failed to reconcile PVC ConfigMap")
+		return ctrl.Result{}, err
+	}
+
+	// Create VolSync handler
+	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, defaultSchedulingInterval)
 
 	protectedPVCs := []corev1.LocalObjectReference{}
 	var latestSync *metav1.Time
@@ -208,8 +235,83 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Primary reconcile complete", "protectedPVCs", len(protectedPVCs))
+	logger.Info("Primary reconcile complete", "protectedPVCs", len(protectedPVCs), "configMap", configMapName)
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+}
+
+// reconcilePVCConfigMap creates or updates a ConfigMap with entries for each PVC
+func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
+	ctx context.Context,
+	logger logr.Logger,
+	vgr *volrep.VolumeGroupReplication,
+	pvcList *corev1.PersistentVolumeClaimList,
+	configMapName string,
+	defaultSchedulingInterval string,
+	defaultStorageClassName string,
+	defaultVolumeSnapshotClassName string,
+) error {
+	// Build ConfigMap data from PVC list
+	configMapData := make(map[string]string)
+
+	for i := range pvcList.Items {
+		pvc := &pvcList.Items[i]
+
+		// Skip PVCs owned by VolSync
+		if isVolSyncOwned(pvc) {
+			continue
+		}
+
+		// Build key: "pvc=<pvc-name>/<namespace>"
+		key := fmt.Sprintf("pvc=%s/%s", pvc.Name, pvc.Namespace)
+
+		// Build value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+		value := fmt.Sprintf("schedulingInterval=%s:storageClassName=%s:volumeSnapshotClassName=%s",
+			defaultSchedulingInterval,
+			defaultStorageClassName,
+			defaultVolumeSnapshotClassName,
+		)
+
+		configMapData[key] = value
+	}
+
+	// Get or create ConfigMap
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: vgr.Namespace}, configMap)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new ConfigMap
+			configMap = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: vgr.Namespace,
+				},
+				Data: configMapData,
+			}
+
+			// Set VGR as owner
+			if err := controllerutil.SetControllerReference(vgr, configMap, r.Scheme); err != nil {
+				return fmt.Errorf("failed to set controller reference: %w", err)
+			}
+
+			if err := r.Create(ctx, configMap); err != nil {
+				return fmt.Errorf("failed to create ConfigMap: %w", err)
+			}
+
+			logger.Info("Created PVC ConfigMap", "configMap", configMapName, "pvcCount", len(configMapData))
+			return nil
+		}
+		return fmt.Errorf("failed to get ConfigMap: %w", err)
+	}
+
+	// Update existing ConfigMap
+	configMap.Data = configMapData
+	if err := r.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("failed to update ConfigMap: %w", err)
+	}
+
+	logger.Info("Updated PVC ConfigMap", "configMap", configMapName, "pvcCount", len(configMapData))
+	return nil
 }
 
 // ── SECONDARY ────────────────────────────────────────────────────────────────
