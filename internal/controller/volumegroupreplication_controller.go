@@ -263,11 +263,11 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 			continue
 		}
 
-		// Build key: "pvc=<pvc-name>/<namespace>"
-		key := fmt.Sprintf("pvc=%s/%s", pvc.Name, pvc.Namespace)
+		// Build key: "pvc.<pvc-name>_<namespace>" (ConfigMap keys must match [-._a-zA-Z0-9]+)
+		key := fmt.Sprintf("pvc.%s_%s", pvc.Name, pvc.Namespace)
 
-		// Build value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
-		value := fmt.Sprintf("schedulingInterval=%s:storageClassName=%s:volumeSnapshotClassName=%s",
+		// Build value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
+		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,volumeSnapshotClassName:%s",
 			defaultSchedulingInterval,
 			defaultStorageClassName,
 			defaultVolumeSnapshotClassName,
@@ -329,37 +329,37 @@ type PVCConfig struct {
 
 // parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
 // Expected format:
-// Key: "pvc=<pvc-name>/<namespace>"
-// Value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+// Key: "pvc.<pvc-name>_<namespace>"
+// Value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
 func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Logger) ([]PVCConfig, error) {
 	configs := []PVCConfig{}
 
 	for key, value := range configMapData {
-		// Parse key: "pvc=<pvc-name>/<namespace>"
-		if !strings.HasPrefix(key, "pvc=") {
+		// Parse key: "pvc.<pvc-name>_<namespace>"
+		if !strings.HasPrefix(key, "pvc.") {
 			continue
 		}
 
-		// Remove "pvc=" prefix
-		pvcInfo := strings.TrimPrefix(key, "pvc=")
-		parts := strings.Split(pvcInfo, "/")
+		// Remove "pvc." prefix and split by "_"
+		pvcInfo := strings.TrimPrefix(key, "pvc.")
+		parts := strings.SplitN(pvcInfo, "_", 2)
 		if len(parts) != 2 {
-			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc=<name>/<namespace>'", "key", key)
+			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc.<name>_<namespace>'", "key", key)
 			continue
 		}
 
 		pvcName := parts[0]
 		namespace := parts[1]
 
-		// Parse value: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
 		config := PVCConfig{
 			Name:      pvcName,
 			Namespace: namespace,
 		}
 
-		valueParts := strings.Split(value, ":")
+		valueParts := strings.Split(value, ",")
 		for _, part := range valueParts {
-			kv := strings.SplitN(part, "=", 2)
+			kv := strings.SplitN(part, ":", 2)
 			if len(kv) != 2 {
 				continue
 			}
