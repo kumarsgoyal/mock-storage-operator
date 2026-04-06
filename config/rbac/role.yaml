@@ -21,10 +21,10 @@ rules:
   - apiGroups: [volsync.backube]
     resources: [replicationsources, replicationdestinations]
     verbs: [get, list, watch, create, update, patch, delete]
-  # PVCs (read-only — we don't own them)
+  # PVCs (read/write — we create destination PVCs on secondary)
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch, create, update, patch]
   # Secrets (read/write — we auto-generate rsync-tls PSK secrets)
   - apiGroups: [""]
     resources: [secrets]
