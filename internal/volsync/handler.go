@@ -97,6 +97,12 @@ func (v *VSHandler) ReconcileRD(
 		return nil, err
 	}
 
+	// Ensure destination PVC exists before creating RD (like Ramen's EnsurePVCforDirectCopy)
+	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes)
+	if err != nil {
+		return nil, err
+	}
+
 	rd, err := v.createOrUpdateRD(pvcName, capacity, storageClassName, accessModes, pskSecretName, serviceType)
 	if err != nil {
 		return nil, err
@@ -129,6 +135,60 @@ func rdStatusReady(rd *volsyncv1alpha1.ReplicationDestination, log logr.Logger) 
 	}
 
 	return true
+}
+
+// ensureDestinationPVC creates the destination PVC if it doesn't exist
+// This is similar to Ramen's EnsurePVCforDirectCopy function
+func (v *VSHandler) ensureDestinationPVC(
+	pvcName string,
+	capacity *resource.Quantity,
+	storageClassName *string,
+	accessModes []corev1.PersistentVolumeAccessMode,
+) error {
+	l := v.log.WithValues("pvcName", pvcName)
+
+	if len(accessModes) == 0 {
+		return fmt.Errorf("accessModes must be provided for PVC %s", pvcName)
+	}
+
+	if capacity == nil {
+		return fmt.Errorf("capacity must be provided for PVC %s", pvcName)
+	}
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: v.owner.GetNamespace(),
+		},
+	}
+
+	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, pvc, func() error {
+		if err := ctrl.SetControllerReference(v.owner, pvc, v.client.Scheme()); err != nil {
+			return fmt.Errorf("failed to set controller reference: %w", err)
+		}
+
+		// Only set spec fields if PVC is being created (not already exists)
+		if pvc.CreationTimestamp.IsZero() {
+			pvc.Spec.AccessModes = accessModes
+			pvc.Spec.StorageClassName = storageClassName
+			volumeMode := corev1.PersistentVolumeFilesystem
+			pvc.Spec.VolumeMode = &volumeMode
+		}
+
+		// Always update capacity (can be expanded)
+		pvc.Spec.Resources.Requests = corev1.ResourceList{
+			corev1.ResourceStorage: *capacity,
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create/update destination PVC: %w", err)
+	}
+
+	l.V(1).Info("Destination PVC ensured", "operation", op, "pvc", pvcName)
+
+	return nil
 }
 
 // createOrUpdateRD creates or updates a ReplicationDestination
@@ -169,6 +229,7 @@ func (v *VSHandler) createOrUpdateRD(
 				Capacity:         capacity,
 				StorageClassName: storageClassName,
 				AccessModes:      accessModes,
+				DestinationPVC:   &pvcName, // Use the pre-created PVC as destination
 			},
 		}
 

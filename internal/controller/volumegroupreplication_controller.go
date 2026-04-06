@@ -28,6 +28,7 @@ const (
 	mockProvisionerName = "mock.storage.io"
 	remoteAddressKey    = "mock.storage.io/remote-address"
 	remoteKeySecretKey  = "mock.storage.io/remote-key-secret"
+	PVCConfigMapName    = "pvc-configmap"
 )
 
 // VolumeGroupReplicationReconciler reconciles VolumeGroupReplication objects
@@ -163,7 +164,7 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 	// Create or update ConfigMap with PVC entries
 	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
 	if configMapName == "" {
-		configMapName = "pvc-config"
+		configMapName = PVCConfigMapName
 	}
 
 	if err := r.reconcilePVCConfigMap(ctx, logger, vgr, pvcList, configMapName,
@@ -389,7 +390,10 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
 	logger.V(1).Info("Reconciling as secondary")
 
-	configMapName := "mock-configmap"
+	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
+	if configMapName == "" {
+		configMapName = PVCConfigMapName
+	}
 
 	// Get the ConfigMap
 	configMap := &corev1.ConfigMap{}
