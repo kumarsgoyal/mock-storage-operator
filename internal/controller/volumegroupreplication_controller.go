@@ -263,8 +263,8 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 			continue
 		}
 
-		// Build key: "pvc.<pvc-name>_<namespace>" (ConfigMap keys must match [-._a-zA-Z0-9]+)
-		key := fmt.Sprintf("pvc.%s_%s", pvc.Name, pvc.Namespace)
+		// Build key: "pvc.<pvc-name>.<namespace>" (ConfigMap keys must match [-._a-zA-Z0-9]+)
+		key := fmt.Sprintf("pvc.%s.%s", pvc.Name, pvc.Namespace)
 
 		// Build value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
 		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,volumeSnapshotClassName:%s",
@@ -329,22 +329,22 @@ type PVCConfig struct {
 
 // parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
 // Expected format:
-// Key: "pvc.<pvc-name>_<namespace>"
+// Key: "pvc.<pvc-name>.<namespace>"
 // Value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
 func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Logger) ([]PVCConfig, error) {
 	configs := []PVCConfig{}
 
 	for key, value := range configMapData {
-		// Parse key: "pvc.<pvc-name>_<namespace>"
+		// Parse key: "pvc.<pvc-name>.<namespace>"
 		if !strings.HasPrefix(key, "pvc.") {
 			continue
 		}
 
-		// Remove "pvc." prefix and split by "_"
+		// Remove "pvc." prefix and split by "."
 		pvcInfo := strings.TrimPrefix(key, "pvc.")
-		parts := strings.SplitN(pvcInfo, "_", 2)
+		parts := strings.SplitN(pvcInfo, ".", 2)
 		if len(parts) != 2 {
-			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc.<name>_<namespace>'", "key", key)
+			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc.<name>.<namespace>'", "key", key)
 			continue
 		}
 
