@@ -162,30 +162,17 @@ Save the following as `vgrclass.yaml`:
 apiVersion: replication.storage.openshift.io/v1alpha1
 kind: VolumeGroupReplicationClass
 metadata:
-  name: mock-vgr-class
   annotations:
     replication.storage.openshift.io/is-default-class: "true"
   labels:
-    ramendr.openshift.io/groupreplicationid: mock-storage-group-id
-    ramendr.openshift.io/storageid: mock-storage-id
+    ramendr.openshift.io/groupreplicationid: 48cc84f712b8dcb1f9ea
+    ramendr.openshift.io/storageid: e1a9e2831d450379ce51d30a418b2
     ramendr.openshift.io/global: "true"
+  name: vgrc-1
 spec:
-  provisioner: mock.storage.io
   parameters:
-    # Default capacity for ReplicationDestinations
-    capacity: "10Gi"
-    
-    # Optional: Custom PSK secret name
-    # pskSecretName: "volsync-rsync-tls-secret"
-    
-    # Per-PVC Configuration
-    # Format: pvc=<pvc-name>/<namespace>: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
-    
-    # Example: Configure PVC named "mysql-data" in "myapp" namespace
-    pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=rook-cephfs:volumeSnapshotClassName=csi-cephfsplugin-snapclass"
-    
-    # Example: Configure PVC named "postgres-data" in "myapp" namespace
-    pvc=postgres-data/myapp: "schedulingInterval=10m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+    schedulingInterval: 5m
+  provisioner: openshift-storage.cephfs.csi.ceph.com
 ```
 
 Apply on both clusters:
@@ -210,7 +197,6 @@ The VolumeGroupReplication resource has three possible states:
 |-------|-------------|--------------|
 | `primary` | Creates ReplicationSources that push data | Source cluster |
 | `secondary` | Creates ReplicationDestinations that receive data | Destination cluster |
-| `resync` | Not implemented in mock operator | N/A |
 
 ### Step 4: Deploy Secondary VGR
 
@@ -222,29 +208,28 @@ Save as `secondary-vgr.yaml`:
 apiVersion: replication.storage.openshift.io/v1alpha1
 kind: VolumeGroupReplication
 metadata:
-  name: myapp-vgr
-  namespace: myapp
+  labels:
+    ramendr.openshift.io/created-by-ramen: "true"
+  name: vgr-1
+  namespace: default
 spec:
-  # Set to secondary to create ReplicationDestinations
+  external: true
   replicationState: secondary
-  
-  # Reference to the VolumeGroupReplicationClass
-  volumeGroupReplicationClassName: mock-vgr-class
-  
-  # Selector to find PVCs to protect
   source:
     selector:
       matchLabels:
-        app: myapp
-  
-  # Auto-resync when in secondary mode
-  autoResync: true
+        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+  volumeGroupReplicationClassName: vgrc-1
 ```
 
 Apply on secondary cluster:
 ```bash
 kubectl apply -f secondary-vgr.yaml --context secondary
 ```
+
+> [!IMPORTANT]
+> **The newly create VGR will not reach desired state due to missing configmap.**
+The configmap will be created by the primary, and you will need to copy it and create it in the secondary cluster.
 
 **Monitor deployment:**
 ```bash
@@ -258,12 +243,38 @@ kubectl get replicationdestinations -n myapp --context secondary
 kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary
 ```
 
-**Expected log output:**
-```
-ReplicationDestination ready pvc=mysql-data address=mysql-data-rd.myapp.svc.clusterset.local keySecret=volsync-rsync-tls-secret
+### Step 5: Create Application PVC
+
+Before deploying the VGR, create an application PVC on the **primary cluster** with the consistency group label.
+
+Save as `app-pvc.yaml`:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+  name: mock-pvc-test
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-cephfs-fs1
+  resources:
+    requests:
+      storage: 1Gi
 ```
 
-### Step 5: Deploy Primary VGR
+Apply on primary cluster:
+```bash
+kubectl apply -f app-pvc.yaml --context primary
+```
+
+> [!NOTE]
+> The `ramendr.openshift.io/consistency-group` label is critical - it groups PVCs for replication and will be propagated to the secondary cluster.
+
+### Step 6: Deploy Primary VGR
 
 Deploy the VGR on the **primary cluster**. This creates ReplicationSources that connect to the secondary.
 
@@ -273,26 +284,50 @@ Save as `primary-vgr.yaml`:
 apiVersion: replication.storage.openshift.io/v1alpha1
 kind: VolumeGroupReplication
 metadata:
-  name: myapp-vgr
-  namespace: myapp
+  labels:
+    ramendr.openshift.io/created-by-ramen: "true"
+  name: vgr-1
+  namespace: default
 spec:
-  # Set to primary to create ReplicationSources
+  external: true
   replicationState: primary
-  
-  # Reference to the VolumeGroupReplicationClass
-  volumeGroupReplicationClassName: mock-vgr-class
-  
-  # Selector to find PVCs to replicate
   source:
     selector:
       matchLabels:
-        app: myapp
+        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+  volumeGroupReplicationClassName: vgrc-1
 ```
 
 Apply on primary cluster:
 ```bash
 kubectl apply -f primary-vgr.yaml --context primary
 ```
+
+### Step 7: Copy ConfigMap to Secondary
+
+After the primary VGR is created, the operator automatically generates a ConfigMap with PVC configuration. You need to copy this ConfigMap to the secondary cluster.
+
+**On primary cluster**, get the ConfigMap:
+```bash
+kubectl get configmap vgr-pvc-config -n default --context primary -o yaml > pvc-config.yaml
+```
+
+**Edit the file** to remove cluster-specific fields:
+```bash
+# Remove these fields from metadata:
+# - resourceVersion
+# - uid
+# - creationTimestamp
+# - ownerReferences (if present)
+```
+
+**Apply on secondary cluster**:
+```bash
+kubectl apply -f pvc-config.yaml --context secondary
+```
+
+> [!IMPORTANT]
+> **The ConfigMap must be present on the secondary cluster before deploying the secondary VGR.** It contains the PVC specifications needed to create destination PVCs.
 
 **Monitor replication:**
 ```bash
@@ -305,6 +340,20 @@ kubectl get replicationsources -n myapp --context primary
 # Check sync status
 kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastSyncTime}'
 ```
+
+### Step 8: Deploy Secondary VGR
+
+Now deploy the VGR on the **secondary cluster** (refer back to Step 4 for the secondary VGR YAML).
+
+```bash
+kubectl apply -f secondary-vgr.yaml --context secondary
+```
+
+The secondary cluster will:
+1. Read the ConfigMap
+2. Create ReplicationDestinations
+3. Create destination PVCs with the consistency group label
+4. Wait for primary to connect
 
 ---
 
