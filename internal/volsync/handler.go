@@ -97,13 +97,14 @@ func (v *VSHandler) ReconcileRD(
 		return nil, err
 	}
 
-	// Ensure destination PVC exists before creating RD (like Ramen's EnsurePVCforDirectCopy)
-	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes)
+	// Create RD first (without PVC initially)
+	rd, err := v.createOrUpdateRD(pvcName, capacity, storageClassName, accessModes, pskSecretName, serviceType)
 	if err != nil {
 		return nil, err
 	}
 
-	rd, err := v.createOrUpdateRD(pvcName, capacity, storageClassName, accessModes, pskSecretName, serviceType)
+	// Now create destination PVC with RD as owner (like Ramen's EnsurePVCforDirectCopy)
+	err = v.ensureDestinationPVCWithOwner(rd, pvcName, capacity, storageClassName, accessModes)
 	if err != nil {
 		return nil, err
 	}
@@ -137,15 +138,17 @@ func rdStatusReady(rd *volsyncv1alpha1.ReplicationDestination, log logr.Logger) 
 	return true
 }
 
-// ensureDestinationPVC creates the destination PVC if it doesn't exist
+// ensureDestinationPVCWithOwner creates the destination PVC if it doesn't exist
+// The PVC is owned by the ReplicationDestination (not VGR) for proper lifecycle management
 // This is similar to Ramen's EnsurePVCforDirectCopy function
-func (v *VSHandler) ensureDestinationPVC(
+func (v *VSHandler) ensureDestinationPVCWithOwner(
+	rd *volsyncv1alpha1.ReplicationDestination,
 	pvcName string,
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
 ) error {
-	l := v.log.WithValues("pvcName", pvcName)
+	l := v.log.WithValues("pvcName", pvcName, "rdName", rd.Name)
 
 	if len(accessModes) == 0 {
 		return fmt.Errorf("accessModes must be provided for PVC %s", pvcName)
@@ -163,7 +166,8 @@ func (v *VSHandler) ensureDestinationPVC(
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, pvc, func() error {
-		if err := ctrl.SetControllerReference(v.owner, pvc, v.client.Scheme()); err != nil {
+		// Set ReplicationDestination as owner (not VGR)
+		if err := ctrl.SetControllerReference(rd, pvc, v.client.Scheme()); err != nil {
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
 
@@ -186,7 +190,7 @@ func (v *VSHandler) ensureDestinationPVC(
 		return fmt.Errorf("failed to create/update destination PVC: %w", err)
 	}
 
-	l.V(1).Info("Destination PVC ensured", "operation", op, "pvc", pvcName)
+	l.V(1).Info("Destination PVC ensured with RD as owner", "operation", op, "pvc", pvcName, "owner", rd.Name)
 
 	return nil
 }
