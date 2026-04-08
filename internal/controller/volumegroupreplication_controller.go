@@ -533,13 +533,9 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 
 func isVolSyncOwned(pvc *corev1.PersistentVolumeClaim) bool {
-	if _, ok := pvc.Labels["volsync.backube/owned-by"]; ok {
+	// Check if PVC was created by VolSync using the standard Kubernetes label
+	if createdBy, ok := pvc.Labels["app.kubernetes.io/created-by"]; ok && createdBy == "volsync" {
 		return true
-	}
-	for _, ref := range pvc.OwnerReferences {
-		if ref.APIVersion == "volsync.backube/v1alpha1" {
-			return true
-		}
 	}
 	return false
 }
