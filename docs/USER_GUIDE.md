@@ -38,7 +38,6 @@ kubectl apply -k "github.com/csi-addons/kubernetes-csi-addons/config/crd?ref=v0.
 
 # OR install only VolumeGroupReplication CRDs
 kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplicationclasses.yaml
-kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplicationcontents.yaml
 kubectl apply -f https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.14.0/config/crd/bases/replication.storage.openshift.io_volumegroupreplications.yaml
 ```
 
@@ -50,7 +49,6 @@ kubectl get crd | grep replication.storage.openshift.io
 Expected output:
 ```
 volumegroupreplicationclasses.replication.storage.openshift.io
-volumegroupreplicationcontents.replication.storage.openshift.io
 volumegroupreplications.replication.storage.openshift.io
 ```
 
@@ -84,8 +82,6 @@ volsync-7b8c9d5f4d-xxxxx   1/1     Running   0          1m
 
 For multi-cluster networking, install Submariner. Follow the [Submariner installation guide](https://submariner.io/getting-started/).
 
-**Note:** If not using Submariner, you'll need to manually configure service addresses for cross-cluster communication.
-
 ### 4. Storage Classes
 
 Ensure appropriate storage classes are available on both clusters:
@@ -96,8 +92,11 @@ kubectl get storageclass
 ```
 
 You'll need:
-- A storage class for PVC provisioning (e.g., `rook-cephfs`, `standard`)
+- A storage class for PVC provisioning
 - A volume snapshot class for snapshots (e.g., `csi-cephfsplugin-snapclass`)
+
+> [!IMPORTANT]
+> **For now, use cephfs StorageClass. We'll switch to LSO/LVM later.**
 
 ---
 
