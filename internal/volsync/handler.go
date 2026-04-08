@@ -84,16 +84,21 @@ func (v *VSHandler) ReconcileRD(
 ) (*volsyncv1alpha1.ReplicationDestination, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
-	// Check if a ReplicationSource is still here (Can happen if transitioning from primary to secondary)
-	// Before creating a new RD for this PVC, make sure any ReplicationSource for this PVC is cleaned up first
-	err := v.DeleteRS(pvcName)
-	if err != nil {
-		return nil, err
-	}
-
 	// Validate that the PSK secret exists
 	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName)
 	if err != nil || !secretExists {
+		return nil, err
+	}
+
+	// Clear PVC ownership if owned by RS (transitioning from primary to secondary)
+	if err := v.clearPVCOwnershipIfWrongType(pvcName, "ReplicationSource"); err != nil {
+		return nil, err
+	}
+
+	// Check if a ReplicationSource is still here (Can happen if transitioning from primary to secondary)
+	// Before creating a new RD for this PVC, make sure any ReplicationSource for this PVC is cleaned up first
+	err = v.DeleteRS(pvcName)
+	if err != nil {
 		return nil, err
 	}
 
@@ -103,9 +108,14 @@ func (v *VSHandler) ReconcileRD(
 		return nil, err
 	}
 
-	// Now create destination PVC with RD as owner (like Ramen's EnsurePVCforDirectCopy)
-	err = v.ensureDestinationPVCWithOwner(rd, pvcName, capacity, storageClassName, accessModes)
+	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
+	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes)
 	if err != nil {
+		return nil, err
+	}
+
+	// Set RD as owner of the PVC (only if not already owned by RD)
+	if err := v.setPVCOwnerIfNeeded(pvcName, rd, "ReplicationDestination"); err != nil {
 		return nil, err
 	}
 
@@ -138,17 +148,16 @@ func rdStatusReady(rd *volsyncv1alpha1.ReplicationDestination, log logr.Logger) 
 	return true
 }
 
-// ensureDestinationPVCWithOwner creates the destination PVC if it doesn't exist
-// The PVC is owned by the ReplicationDestination (not VGR) for proper lifecycle management
+// ensureDestinationPVC creates the destination PVC if it doesn't exist
 // This is similar to Ramen's EnsurePVCforDirectCopy function
-func (v *VSHandler) ensureDestinationPVCWithOwner(
-	rd *volsyncv1alpha1.ReplicationDestination,
+// Note: Ownership is set separately via setPVCOwnerIfNeeded
+func (v *VSHandler) ensureDestinationPVC(
 	pvcName string,
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
 ) error {
-	l := v.log.WithValues("pvcName", pvcName, "rdName", rd.Name)
+	l := v.log.WithValues("pvcName", pvcName)
 
 	if len(accessModes) == 0 {
 		return fmt.Errorf("accessModes must be provided for PVC %s", pvcName)
@@ -166,11 +175,6 @@ func (v *VSHandler) ensureDestinationPVCWithOwner(
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, pvc, func() error {
-		// Set ReplicationDestination as owner (not VGR)
-		if err := ctrl.SetControllerReference(rd, pvc, v.client.Scheme()); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
-		}
-
 		// Only set spec fields if PVC is being created (not already exists)
 		if pvc.CreationTimestamp.IsZero() {
 			pvc.Spec.AccessModes = accessModes
@@ -190,15 +194,16 @@ func (v *VSHandler) ensureDestinationPVCWithOwner(
 		return fmt.Errorf("failed to create/update destination PVC: %w", err)
 	}
 
-	l.V(1).Info("Destination PVC ensured with RD as owner", "operation", op, "pvc", pvcName, "owner", rd.Name)
+	l.V(1).Info("Destination PVC ensured", "operation", op, "pvc", pvcName)
 
 	return nil
 }
 
-// clearPVCOwnership removes all owner references from a PVC
-// This is called before switching replication direction (primary <-> secondary)
-func (v *VSHandler) clearPVCOwnership(pvcName string) error {
-	l := v.log.WithValues("pvcName", pvcName)
+// clearPVCOwnershipIfWrongType clears PVC ownership only if owned by the wrong type
+// wrongType should be "ReplicationSource" or "ReplicationDestination"
+// This avoids unnecessary updates during normal reconciliation
+func (v *VSHandler) clearPVCOwnershipIfWrongType(pvcName string, wrongType string) error {
+	l := v.log.WithValues("pvcName", pvcName, "wrongType", wrongType)
 
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
@@ -214,24 +219,33 @@ func (v *VSHandler) clearPVCOwnership(pvcName string) error {
 		return fmt.Errorf("failed to get PVC: %w", err)
 	}
 
-	// Clear all owner references
-	if len(pvc.OwnerReferences) > 0 {
+	// Check if PVC is owned by the wrong type
+	needsClear := false
+	for _, ownerRef := range pvc.OwnerReferences {
+		if ownerRef.Kind == wrongType {
+			needsClear = true
+			break
+		}
+	}
+
+	if needsClear {
 		pvc.OwnerReferences = []metav1.OwnerReference{}
 		if err := v.client.Update(v.ctx, pvc); err != nil {
 			return fmt.Errorf("failed to clear PVC ownership: %w", err)
 		}
-		l.Info("Cleared PVC ownership")
+		l.Info("Cleared PVC ownership (was owned by wrong type)", "previousOwnerType", wrongType)
 	} else {
-		l.V(1).Info("PVC has no owner references to clear")
+		l.V(1).Info("PVC not owned by wrong type, no need to clear")
 	}
 
 	return nil
 }
 
-// setPVCOwner sets the owner reference of a PVC to the specified object (RD or RS)
-// This is called after creating RD or RS to establish ownership
-func (v *VSHandler) setPVCOwner(pvcName string, owner client.Object) error {
-	l := v.log.WithValues("pvcName", pvcName, "ownerKind", owner.GetObjectKind().GroupVersionKind().Kind, "ownerName", owner.GetName())
+// setPVCOwnerIfNeeded sets the owner reference only if not already owned by correct type
+// expectedType should be "ReplicationSource" or "ReplicationDestination"
+// This avoids unnecessary updates during normal reconciliation
+func (v *VSHandler) setPVCOwnerIfNeeded(pvcName string, owner client.Object, expectedType string) error {
+	l := v.log.WithValues("pvcName", pvcName, "expectedType", expectedType, "ownerName", owner.GetName())
 
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
@@ -240,11 +254,25 @@ func (v *VSHandler) setPVCOwner(pvcName string, owner client.Object) error {
 	}, pvc)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
-			// PVC doesn't exist yet, will be created later with owner
-			l.V(1).Info("PVC not found, will be created with owner")
+			// PVC doesn't exist yet
+			l.V(1).Info("PVC not found, cannot set owner")
 			return nil
 		}
 		return fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	// Check if already owned by the correct type
+	alreadyOwned := false
+	for _, ownerRef := range pvc.OwnerReferences {
+		if ownerRef.Kind == expectedType && ownerRef.Name == owner.GetName() {
+			alreadyOwned = true
+			break
+		}
+	}
+
+	if alreadyOwned {
+		l.V(1).Info("PVC already owned by correct type, no update needed")
+		return nil
 	}
 
 	// Set the owner reference
@@ -256,7 +284,7 @@ func (v *VSHandler) setPVCOwner(pvcName string, owner client.Object) error {
 		return fmt.Errorf("failed to update PVC with owner: %w", err)
 	}
 
-	l.Info("Set PVC owner", "owner", owner.GetName())
+	l.Info("Set PVC owner", "ownerType", expectedType, "ownerName", owner.GetName())
 
 	return nil
 }
@@ -331,8 +359,8 @@ func (v *VSHandler) ReconcileRS(
 		return nil, err
 	}
 
-	// Clear PVC ownership before deleting RD (if transitioning from secondary to primary)
-	if err := v.clearPVCOwnership(pvcName); err != nil {
+	// Clear PVC ownership if owned by RD (transitioning from secondary to primary)
+	if err := v.clearPVCOwnershipIfWrongType(pvcName, "ReplicationDestination"); err != nil {
 		return nil, err
 	}
 
@@ -348,8 +376,8 @@ func (v *VSHandler) ReconcileRS(
 		return nil, err
 	}
 
-	// Set RS as the owner of the PVC
-	if err := v.setPVCOwner(pvcName, replicationSource); err != nil {
+	// Set RS as owner of the PVC (only if not already owned by RS)
+	if err := v.setPVCOwnerIfNeeded(pvcName, replicationSource, "ReplicationSource"); err != nil {
 		return nil, err
 	}
 
