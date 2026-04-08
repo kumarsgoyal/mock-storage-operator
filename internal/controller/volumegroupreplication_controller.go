@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	volsyncv1alpha1 "github.com/backube/volsync/api/v1alpha1"
 	volrep "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/ramendr/mock-storage-operator/internal/volsync"
@@ -136,7 +135,6 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 
 	pvcList := &corev1.PersistentVolumeClaimList{}
 	if err := r.List(ctx, pvcList,
-		client.InNamespace(vgr.Namespace),
 		client.MatchingLabelsSelector{Selector: sel},
 	); err != nil {
 		return ctrl.Result{}, err
@@ -207,6 +205,7 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		// Use VolSync handler to reconcile ReplicationSource (like Ramen's ReconcileRS)
 		rs, err := vsHandler.ReconcileRS(
 			pvc.Name,
+			pvc.Namespace,
 			remoteAddress,
 			pskSecretName,
 			pvc.Spec.StorageClassName,
@@ -458,6 +457,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 		// Use VolSync handler to reconcile ReplicationDestination
 		rd, err := vsHandler.ReconcileRD(
 			pvcConfig.Name,
+			pvcConfig.Namespace,
 			&capacityQuantity,
 			&pvcConfig.StorageClassName,
 			[]corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -518,8 +518,24 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 	logger logr.Logger,
 	vgr *volrep.VolumeGroupReplication,
 ) (ctrl.Result, error) {
-	logger.Info("VolumeGroupReplication deleted — owned RS/RD objects garbage collected via ownerReference")
+	logger.Info("VolumeGroupReplication being deleted — cleaning up RS/RD resources by label")
 
+	// Create VSHandler to delete resources by label
+	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, "")
+
+	// Delete all ReplicationSources with the owner label
+	if err := vsHandler.DeleteRSByLabel(); err != nil {
+		logger.Error(err, "Failed to delete ReplicationSources by label")
+		return ctrl.Result{}, err
+	}
+
+	// Delete all ReplicationDestinations with the owner label
+	if err := vsHandler.DeleteRDByLabel(); err != nil {
+		logger.Error(err, "Failed to delete ReplicationDestinations by label")
+		return ctrl.Result{}, err
+	}
+
+	// Remove finalizer after cleanup
 	controllerutil.RemoveFinalizer(vgr, vgrFinalizer)
 	if err := r.Update(ctx, vgr); err != nil {
 		if errors.IsNotFound(err) {
@@ -527,6 +543,8 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 		}
 		return ctrl.Result{}, err
 	}
+
+	logger.Info("VolumeGroupReplication deletion complete")
 	return ctrl.Result{}, nil
 }
 
@@ -569,8 +587,6 @@ func setCondition(conditions *[]metav1.Condition, condType string, status bool, 
 func (r *VolumeGroupReplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&volrep.VolumeGroupReplication{}).
-		Owns(&volsyncv1alpha1.ReplicationSource{}).
-		Owns(&volsyncv1alpha1.ReplicationDestination{}).
 		Complete(r)
 }
 

@@ -75,7 +75,7 @@ func NewVSHandler(
 
 // ReconcileRD reconciles a ReplicationDestination for secondary cluster
 func (v *VSHandler) ReconcileRD(
-	pvcName string,
+	pvcName, pvcNamespace string,
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
@@ -92,7 +92,7 @@ func (v *VSHandler) ReconcileRD(
 	}
 
 	// Clear PVC ownership if owned by RS (transitioning from primary to secondary)
-	if err := v.clearPVCOwnershipIfWrongType(pvcName, "ReplicationSource"); err != nil {
+	if err := v.clearPVCOwnershipIfWrongType(pvcName, pvcNamespace, "ReplicationSource"); err != nil {
 		return nil, err
 	}
 
@@ -104,19 +104,19 @@ func (v *VSHandler) ReconcileRD(
 	}
 
 	// Create RD first (without PVC initially)
-	rd, err := v.createOrUpdateRD(pvcName, capacity, storageClassName, accessModes, pskSecretName, serviceType)
+	rd, err := v.createOrUpdateRD(pvcName, pvcNamespace, capacity, storageClassName, accessModes, pskSecretName, serviceType)
 	if err != nil {
 		return nil, err
 	}
 
 	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
-	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes, consistencyGroup)
+	err = v.ensureDestinationPVC(pvcName, pvcNamespace, capacity, storageClassName, accessModes, consistencyGroup)
 	if err != nil {
 		return nil, err
 	}
 
 	// Set RD as owner of the PVC (only if not already owned by RD)
-	if err := v.setPVCOwnerIfNeeded(pvcName, rd, "ReplicationDestination"); err != nil {
+	if err := v.setPVCOwnerIfNeeded(pvcName, pvcNamespace, rd, "ReplicationDestination"); err != nil {
 		return nil, err
 	}
 
@@ -153,7 +153,7 @@ func rdStatusReady(rd *volsyncv1alpha1.ReplicationDestination, log logr.Logger) 
 // This is similar to Ramen's EnsurePVCforDirectCopy function
 // Note: Ownership is set separately via setPVCOwnerIfNeeded
 func (v *VSHandler) ensureDestinationPVC(
-	pvcName string,
+	pvcName, pvcNamespace string,
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
@@ -172,7 +172,7 @@ func (v *VSHandler) ensureDestinationPVC(
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
-			Namespace: v.owner.GetNamespace(),
+			Namespace: pvcNamespace,
 		},
 	}
 
@@ -212,13 +212,13 @@ func (v *VSHandler) ensureDestinationPVC(
 // clearPVCOwnershipIfWrongType clears PVC ownership only if owned by the wrong type
 // wrongType should be "ReplicationSource" or "ReplicationDestination"
 // This avoids unnecessary updates during normal reconciliation
-func (v *VSHandler) clearPVCOwnershipIfWrongType(pvcName string, wrongType string) error {
+func (v *VSHandler) clearPVCOwnershipIfWrongType(pvcName, pvcNamespace string, wrongType string) error {
 	l := v.log.WithValues("pvcName", pvcName, "wrongType", wrongType)
 
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
 		Name:      pvcName,
-		Namespace: v.owner.GetNamespace(),
+		Namespace: pvcNamespace,
 	}, pvc)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -254,13 +254,13 @@ func (v *VSHandler) clearPVCOwnershipIfWrongType(pvcName string, wrongType strin
 // setPVCOwnerIfNeeded sets the owner reference only if not already owned by correct type
 // expectedType should be "ReplicationSource" or "ReplicationDestination"
 // This avoids unnecessary updates during normal reconciliation
-func (v *VSHandler) setPVCOwnerIfNeeded(pvcName string, owner client.Object, expectedType string) error {
+func (v *VSHandler) setPVCOwnerIfNeeded(pvcName, pvcNamespace string, owner client.Object, expectedType string) error {
 	l := v.log.WithValues("pvcName", pvcName, "expectedType", expectedType, "ownerName", owner.GetName())
 
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
 		Name:      pvcName,
-		Namespace: v.owner.GetNamespace(),
+		Namespace: pvcNamespace,
 	}, pvc)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -301,7 +301,7 @@ func (v *VSHandler) setPVCOwnerIfNeeded(pvcName string, owner client.Object, exp
 
 // createOrUpdateRD creates or updates a ReplicationDestination
 func (v *VSHandler) createOrUpdateRD(
-	pvcName string,
+	pvcName, pvcNamespace string,
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
@@ -317,15 +317,15 @@ func (v *VSHandler) createOrUpdateRD(
 	rd := &volsyncv1alpha1.ReplicationDestination{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      getReplicationDestinationName(pvcName),
-			Namespace: v.owner.GetNamespace(),
+			Namespace: pvcNamespace,
 		},
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, rd, func() error {
-		if err := ctrl.SetControllerReference(v.owner, rd, v.client.Scheme()); err != nil {
-			l.Error(err, "unable to set controller reference")
-			return fmt.Errorf("%w", err)
-		}
+		// if err := ctrl.SetControllerReference(v.owner, rd, v.client.Scheme()); err != nil {
+		// 	l.Error(err, "unable to set controller reference")
+		// 	return fmt.Errorf("%w", err)
+		// }
 
 		addVRGOwnerLabel(v.owner, rd)
 
@@ -354,7 +354,7 @@ func (v *VSHandler) createOrUpdateRD(
 
 // ReconcileRS reconciles a ReplicationSource for primary cluster
 func (v *VSHandler) ReconcileRS(
-	pvcName string,
+	pvcName, pvcNamespace string,
 	remoteAddress string,
 	pskSecretName string,
 	storageClassName *string,
@@ -370,7 +370,7 @@ func (v *VSHandler) ReconcileRS(
 	}
 
 	// Clear PVC ownership if owned by RD (transitioning from secondary to primary)
-	if err := v.clearPVCOwnershipIfWrongType(pvcName, "ReplicationDestination"); err != nil {
+	if err := v.clearPVCOwnershipIfWrongType(pvcName, pvcNamespace, "ReplicationDestination"); err != nil {
 		return nil, err
 	}
 
@@ -381,13 +381,13 @@ func (v *VSHandler) ReconcileRS(
 		return nil, err
 	}
 
-	replicationSource, err := v.createOrUpdateRS(pvcName, remoteAddress, pskSecretName, storageClassName, accessModes, volumeSnapshotClassName)
+	replicationSource, err := v.createOrUpdateRS(pvcName, pvcNamespace, remoteAddress, pskSecretName, storageClassName, accessModes, volumeSnapshotClassName)
 	if err != nil {
 		return nil, err
 	}
 
 	// Set RS as owner of the PVC (only if not already owned by RS)
-	if err := v.setPVCOwnerIfNeeded(pvcName, replicationSource, "ReplicationSource"); err != nil {
+	if err := v.setPVCOwnerIfNeeded(pvcName, pvcNamespace, replicationSource, "ReplicationSource"); err != nil {
 		return nil, err
 	}
 
@@ -398,7 +398,7 @@ func (v *VSHandler) ReconcileRS(
 
 // createOrUpdateRS creates or updates a ReplicationSource
 func (v *VSHandler) createOrUpdateRS(
-	pvcName string,
+	pvcName, pvcNamespace string,
 	remoteAddress string,
 	pskSecretName string,
 	storageClassName *string,
@@ -410,15 +410,15 @@ func (v *VSHandler) createOrUpdateRS(
 	rs := &volsyncv1alpha1.ReplicationSource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      getReplicationSourceName(pvcName),
-			Namespace: v.owner.GetNamespace(),
+			Namespace: pvcNamespace,
 		},
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, rs, func() error {
-		if err := ctrl.SetControllerReference(v.owner, rs, v.client.Scheme()); err != nil {
-			l.Error(err, "unable to set controller reference")
-			return fmt.Errorf("%w", err)
-		}
+		// if err := ctrl.SetControllerReference(v.owner, rs, v.client.Scheme()); err != nil {
+		// 	l.Error(err, "unable to set controller reference")
+		// 	return fmt.Errorf("%w", err)
+		// }
 
 		addVRGOwnerLabel(v.owner, rs)
 
@@ -604,7 +604,6 @@ func (v *VSHandler) listByOwner(list client.ObjectList) error {
 		VRGOwnerLabel: v.owner.GetName(),
 	}
 	listOptions := []client.ListOption{
-		client.InNamespace(v.owner.GetNamespace()),
 		client.MatchingLabels(matchLabels),
 	}
 
@@ -613,6 +612,46 @@ func (v *VSHandler) listByOwner(list client.ObjectList) error {
 		return fmt.Errorf("error listing by label (%w)", err)
 	}
 
+	return nil
+}
+
+// DeleteRSByLabel deletes all ReplicationSources with the owner label
+func (v *VSHandler) DeleteRSByLabel() error {
+	rsList := &volsyncv1alpha1.ReplicationSourceList{}
+	if err := v.listByOwner(rsList); err != nil {
+		return err
+	}
+
+	for i := range rsList.Items {
+		rs := &rsList.Items[i]
+		v.log.Info("Deleting ReplicationSource", "name", rs.Name, "namespace", rs.Namespace)
+		if err := v.client.Delete(v.ctx, rs); err != nil && !kerrors.IsNotFound(err) {
+			v.log.Error(err, "Failed to delete ReplicationSource", "name", rs.Name, "namespace", rs.Namespace)
+			return fmt.Errorf("failed to delete ReplicationSource %s/%s: %w", rs.Namespace, rs.Name, err)
+		}
+	}
+
+	v.log.Info("Deleted ReplicationSources", "count", len(rsList.Items))
+	return nil
+}
+
+// DeleteRDByLabel deletes all ReplicationDestinations with the owner label
+func (v *VSHandler) DeleteRDByLabel() error {
+	rdList := &volsyncv1alpha1.ReplicationDestinationList{}
+	if err := v.listByOwner(rdList); err != nil {
+		return err
+	}
+
+	for i := range rdList.Items {
+		rd := &rdList.Items[i]
+		v.log.Info("Deleting ReplicationDestination", "name", rd.Name, "namespace", rd.Namespace)
+		if err := v.client.Delete(v.ctx, rd); err != nil && !kerrors.IsNotFound(err) {
+			v.log.Error(err, "Failed to delete ReplicationDestination", "name", rd.Name, "namespace", rd.Namespace)
+			return fmt.Errorf("failed to delete ReplicationDestination %s/%s: %w", rd.Namespace, rd.Name, err)
+		}
+	}
+
+	v.log.Info("Deleted ReplicationDestinations", "count", len(rdList.Items))
 	return nil
 }
 
