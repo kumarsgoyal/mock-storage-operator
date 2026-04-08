@@ -198,52 +198,7 @@ The VolumeGroupReplication resource has three possible states:
 | `primary` | Creates ReplicationSources that push data | Source cluster |
 | `secondary` | Creates ReplicationDestinations that receive data | Destination cluster |
 
-### Step 4: Deploy Secondary VGR
-
-Deploy the VGR on the **secondary cluster first**. This creates ReplicationDestinations and exposes services.
-
-Save as `secondary-vgr.yaml`:
-
-```yaml
-apiVersion: replication.storage.openshift.io/v1alpha1
-kind: VolumeGroupReplication
-metadata:
-  labels:
-    ramendr.openshift.io/created-by-ramen: "true"
-  name: vgr-1
-  namespace: default
-spec:
-  external: true
-  replicationState: secondary
-  source:
-    selector:
-      matchLabels:
-        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
-  volumeGroupReplicationClassName: vgrc-1
-```
-
-Apply on secondary cluster:
-```bash
-kubectl apply -f secondary-vgr.yaml --context secondary
-```
-
-> [!IMPORTANT]
-> **The newly create VGR will not reach desired state due to missing configmap.**
-The configmap will be created by the primary, and you will need to copy it and create it in the secondary cluster.
-
-**Monitor deployment:**
-```bash
-# Watch VGR status
-kubectl get vgr myapp-vgr -n myapp --context secondary -w
-
-# Check ReplicationDestinations
-kubectl get replicationdestinations -n myapp --context secondary
-
-# Check operator logs for service addresses
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary
-```
-
-### Step 5: Create Application PVC
+### Step 4: Create Application PVC
 
 Before deploying the VGR, create an application PVC on the **primary cluster** with the consistency group label.
 
@@ -274,7 +229,7 @@ kubectl apply -f app-pvc.yaml --context primary
 > [!NOTE]
 > The `ramendr.openshift.io/consistency-group` label is critical - it groups PVCs for replication and will be propagated to the secondary cluster.
 
-### Step 6: Deploy Primary VGR
+### Step 5: Deploy Primary VGR
 
 Deploy the VGR on the **primary cluster**. This creates ReplicationSources that connect to the secondary.
 
@@ -303,7 +258,7 @@ Apply on primary cluster:
 kubectl apply -f primary-vgr.yaml --context primary
 ```
 
-### Step 7: Copy ConfigMap to Secondary
+### Step 6: Copy ConfigMap to Secondary
 
 After the primary VGR is created, the operator automatically generates a ConfigMap with PVC configuration. You need to copy this ConfigMap to the secondary cluster.
 
@@ -341,10 +296,31 @@ kubectl get replicationsources -n myapp --context primary
 kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastSyncTime}'
 ```
 
-### Step 8: Deploy Secondary VGR
+### Step 7: Deploy Secondary VGR
 
-Now deploy the VGR on the **secondary cluster** (refer back to Step 4 for the secondary VGR YAML).
+Now deploy the VGR on the **secondary cluster**. This creates ReplicationDestinations and exposes services.
 
+Save as `secondary-vgr.yaml`:
+
+```yaml
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  labels:
+    ramendr.openshift.io/created-by-ramen: "true"
+  name: vgr-1
+  namespace: default
+spec:
+  external: true
+  replicationState: secondary
+  source:
+    selector:
+      matchLabels:
+        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+  volumeGroupReplicationClassName: vgrc-1
+```
+
+Apply on secondary cluster:
 ```bash
 kubectl apply -f secondary-vgr.yaml --context secondary
 ```
@@ -354,6 +330,18 @@ The secondary cluster will:
 2. Create ReplicationDestinations
 3. Create destination PVCs with the consistency group label
 4. Wait for primary to connect
+
+**Monitor deployment:**
+```bash
+# Watch VGR status
+kubectl get vgr vgr-1 -n default --context secondary -w
+
+# Check ReplicationDestinations
+kubectl get replicationdestinations -n default --context secondary
+
+# Check operator logs for service addresses
+kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary
+```
 
 ---
 
