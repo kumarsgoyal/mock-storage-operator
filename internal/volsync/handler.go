@@ -81,6 +81,7 @@ func (v *VSHandler) ReconcileRD(
 	accessModes []corev1.PersistentVolumeAccessMode,
 	pskSecretName string,
 	serviceType *corev1.ServiceType,
+	consistencyGroup string,
 ) (*volsyncv1alpha1.ReplicationDestination, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
@@ -109,7 +110,7 @@ func (v *VSHandler) ReconcileRD(
 	}
 
 	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
-	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes)
+	err = v.ensureDestinationPVC(pvcName, capacity, storageClassName, accessModes, consistencyGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +157,7 @@ func (v *VSHandler) ensureDestinationPVC(
 	capacity *resource.Quantity,
 	storageClassName *string,
 	accessModes []corev1.PersistentVolumeAccessMode,
+	consistencyGroup string,
 ) error {
 	l := v.log.WithValues("pvcName", pvcName)
 
@@ -175,6 +177,14 @@ func (v *VSHandler) ensureDestinationPVC(
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, pvc, func() error {
+		// Set consistency group label if provided
+		if consistencyGroup != "" {
+			if pvc.Labels == nil {
+				pvc.Labels = make(map[string]string)
+			}
+			pvc.Labels["ramendr.openshift.io/consistency-group"] = consistencyGroup
+		}
+
 		// Only set spec fields if PVC is being created (not already exists)
 		if pvc.CreationTimestamp.IsZero() {
 			pvc.Spec.AccessModes = accessModes

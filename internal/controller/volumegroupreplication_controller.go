@@ -267,11 +267,15 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 		// Build key: "pvc.<pvc-name>.<namespace>" (ConfigMap keys must match [-._a-zA-Z0-9]+)
 		key := fmt.Sprintf("pvc.%s.%s", pvc.Name, pvc.Namespace)
 
-		// Build value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
-		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,volumeSnapshotClassName:%s",
+		// Get consistency group label value
+		consistencyGroup := pvc.Labels["ramendr.openshift.io/consistency-group"]
+
+		// Build value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>,consistencyGroup:<value>"
+		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,volumeSnapshotClassName:%s,consistencyGroup:%s",
 			defaultSchedulingInterval,
 			defaultStorageClassName,
 			defaultVolumeSnapshotClassName,
+			consistencyGroup,
 		)
 
 		configMapData[key] = value
@@ -326,6 +330,7 @@ type PVCConfig struct {
 	SchedulingInterval      string
 	StorageClassName        string
 	VolumeSnapshotClassName string
+	ConsistencyGroup        string // Value of ramendr.openshift.io/consistency-group label
 }
 
 // parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
@@ -352,7 +357,7 @@ func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Lo
 		pvcName := parts[0]
 		namespace := parts[1]
 
-		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
+		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>,consistencyGroup:<value>"
 		config := PVCConfig{
 			Name:      pvcName,
 			Namespace: namespace,
@@ -372,6 +377,8 @@ func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Lo
 				config.StorageClassName = kv[1]
 			case "volumeSnapshotClassName":
 				config.VolumeSnapshotClassName = kv[1]
+			case "consistencyGroup":
+				config.ConsistencyGroup = kv[1]
 			}
 		}
 
@@ -456,6 +463,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 			[]corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			pskSecretName,
 			&serviceType,
+			pvcConfig.ConsistencyGroup,
 		)
 		if err != nil {
 			return ctrl.Result{}, err
