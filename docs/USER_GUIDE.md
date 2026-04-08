@@ -92,7 +92,7 @@ kubectl get storageclass
 ```
 
 You'll need:
-- A storage class for PVC provisioning
+- A storage class for PVC provisioning, for now, for drenv, use `rook-cephfs-fs1` 
 - A volume snapshot class for snapshots (e.g., `csi-cephfsplugin-snapclass`)
 
 > [!IMPORTANT]
@@ -148,7 +148,9 @@ kubectl create secret generic volsync-rsync-tls-secret \
   -n <your-namespace>
 ```
 
-**Important:** The PSK must be identical on both clusters for the same VGR.
+> [!IMPORTANT]
+> **The PSK must be identical on both clusters for the same VGR.**
+Once the secret is created, you have to copy it to the secondary cluster.
 
 ### Step 3: Create VolumeGroupReplicationClass
 
