@@ -83,17 +83,6 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Populate the vgrClass.Spec.Parameters with PVC names. This is supposed to change later.
-	// The key/values will be in the format of VGRClass parameters (pvc-<name>: "true")
-	vgrClass.Spec.Parameters = map[string]string{
-		"pvc-mock-pvc-test": "true",
-		// "pvc-2": "true",
-		"schedulingInterval":      "3m",
-		"storageClassName":        "rook-cephfs-fs1",
-		"pskSecretName":           "volsync-rsync-tls-vgr-1",
-		"volumeSnapshotClassName": "csi-cephfsplugin-snapclass",
-	}
-
 	logger.V(1).Info("Reconciling", "as", vgr.Spec.ReplicationState)
 	// Reconcile based on replication state
 	switch vgr.Spec.ReplicationState {

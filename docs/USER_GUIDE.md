@@ -296,7 +296,112 @@ kubectl get replicationsources -n myapp --context primary
 kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastSyncTime}'
 ```
 
-### Step 7: Deploy Secondary VGR
+### Step 7: Migrate PVC/PV Resources (Optional - For DR Scenarios)
+
+For Disaster Recovery scenarios where data already exists on the storage backend (e.g., CephFS) and you need to re-establish Kubernetes resource definitions on the standby cluster, use this migration script.
+
+**What it does:**
+- Migrates PersistentVolumeClaims (PVCs) and PersistentVolumes (PVs) from primary to secondary cluster
+- Filters resources by consistency group label
+- Strips cluster-specific metadata (uid, resourceVersion, managedFields, ownerReferences, status)
+- Prepares PVs for static binding by removing claimRef
+- Adds required Ramen restore annotation
+- Creates target namespaces automatically
+
+Save as `migrate-pvc-pv.sh`:
+
+```bash
+#!/bin/bash
+
+# Usage: ./migrate-pvc-pv.sh <LABEL> <CONTEXT_C1> <CONTEXT_C2>
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <LABEL> <CONTEXT_C1> <CONTEXT_C2>"
+    exit 1
+fi
+
+LABEL=$1
+CONTEXT_C1=$2
+CONTEXT_C2=$3
+RESTORE_ANN="volumereplicationgroups.ramendr.openshift.io/ramen-restore"
+
+# Standardize the JQ filter for a "clean" slate
+# 1. del(...) removes system-generated fields and ALL existing annotations
+# 2. .metadata.annotations = ... initializes a fresh object with ONLY your key
+JQ_FILTER='del(
+    .metadata.resourceVersion,
+    .metadata.uid,
+    .metadata.creationTimestamp,
+    .metadata.annotations,
+    .metadata.managedFields,
+    .metadata.ownerReferences,
+    .status,
+    .spec.claimRef
+) | .metadata.annotations = {($ann): "True"}'
+
+echo "Starting clean migration: $CONTEXT_C1 -> $CONTEXT_C2"
+
+# Get PVCs (Namespace:Name)
+PVCS=$(kubectl --context="$CONTEXT_C1" get pvc -A -l "$LABEL" -o jsonpath='{range .items[*]}{.metadata.namespace}{":"}{.metadata.name}{" "}{end}')
+
+for entry in $PVCS; do
+    NAMESPACE=$(echo "$entry" | cut -d':' -f1)
+    PVC_NAME=$(echo "$entry" | cut -d':' -f2)
+    
+    # 1. Get PV name
+    PV_NAME=$(kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o jsonpath='{.spec.volumeName}')
+    
+    if [ -n "$PV_NAME" ]; then
+        echo "[PV]  Migrating: $PV_NAME"
+        kubectl --context="$CONTEXT_C1" get pv "$PV_NAME" -o json | \
+        jq --arg ann "$RESTORE_ANN" "$JQ_FILTER" | \
+        kubectl --context="$CONTEXT_C2" apply -f -
+    fi
+
+    # 2. Ensure Namespace exists
+    kubectl --context="$CONTEXT_C2" create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl --context="$CONTEXT_C2" apply -f -
+
+    # 3. Migrate PVC
+    echo "[PVC] Migrating: $NAMESPACE/$PVC_NAME"
+    kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o json | \
+    jq --arg ann "$RESTORE_ANN" "$JQ_FILTER" | \
+    kubectl --context="$CONTEXT_C2" apply -f -
+done
+
+echo "Done."
+```
+
+**Make the script executable:**
+```bash
+chmod +x migrate-pvc-pv.sh
+```
+
+**Run the migration:**
+```bash
+./migrate-pvc-pv.sh \
+  'ramendr.openshift.io/consistency-group=test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7' \
+  primary \
+  secondary
+```
+
+> [!NOTE]
+> This step is **optional** and only needed for DR scenarios where:
+> - Data already exists on shared storage (e.g., CephFS)
+> - You need to recreate PVC/PV resources on the standby cluster
+> - You're performing a failover or relocation operation
+
+**Verify migration:**
+```bash
+# Check PVs on secondary
+kubectl get pv --context secondary
+
+# Check PVCs on secondary
+kubectl get pvc -A --context secondary -l 'ramendr.openshift.io/consistency-group=test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7'
+
+# Verify Ramen restore annotation
+kubectl get pvc -A --context secondary -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.volumereplicationgroups\.ramendr\.openshift\.io/ramen-restore}{"\n"}{end}'
+```
+
+### Step 8: Deploy Secondary VGR
 
 Now deploy the VGR on the **secondary cluster**. This creates ReplicationDestinations and exposes services.
 
