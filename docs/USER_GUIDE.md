@@ -92,7 +92,7 @@ kubectl get storageclass
 ```
 
 You'll need:
-- A storage class for PVC provisioning, for now, for drenv, use `rook-cephfs-fs1`
+- A storage class for PVC provisioning, for now, for drenv, use `standard`
 
 > [!IMPORTANT]
 > **For now, use cephfs StorageClass. We'll switch to LSO/LVM later.**
@@ -214,7 +214,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: rook-cephfs-fs1
+  storageClassName: standard
   resources:
     requests:
       storage: 1Gi
@@ -273,7 +273,7 @@ kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastS
 
 ### Step 7: Migrate PVC/PV Resources (Optional - For DR Scenarios)
 
-For Disaster Recovery scenarios where data already exists on the storage backend (e.g., CephFS) and you need to re-establish Kubernetes resource definitions on the standby cluster, use this migration script.
+For Disaster Recovery scenarios where data already exists on the storage backend (e.g., CephFS) and you need to re-establish Kubernetes resource definitions on the secondary cluster, use this migration script.
 
 **What it does:**
 - Migrates PersistentVolumeClaims (PVCs) and PersistentVolumes (PVs) from primary to secondary cluster
