@@ -257,31 +257,7 @@ Apply on primary cluster:
 kubectl apply -f primary-vgr.yaml --context primary
 ```
 
-### Step 6: Copy ConfigMap to Secondary
-
-After the primary VGR is created, the operator automatically generates a ConfigMap with PVC configuration. You need to copy this ConfigMap to the secondary cluster.
-
-**On primary cluster**, get the ConfigMap:
-```bash
-kubectl get configmap vgr-pvc-config -n default --context primary -o yaml > pvc-config.yaml
-```
-
-**Edit the file** to remove cluster-specific fields:
-```bash
-# Remove these fields from metadata:
-# - resourceVersion
-# - uid
-# - creationTimestamp
-# - ownerReferences (if present)
-```
-
-**Apply on secondary cluster**:
-```bash
-kubectl apply -f pvc-config.yaml --context secondary
-```
-
-> [!IMPORTANT]
-> **The ConfigMap must be present on the secondary cluster before deploying the secondary VGR.** It contains the PVC specifications needed to create destination PVCs.
+### Step 6: Verify Primary VGR Status
 
 **Monitor replication:**
 ```bash
@@ -430,9 +406,9 @@ kubectl apply -f secondary-vgr.yaml --context secondary
 ```
 
 The secondary cluster will:
-1. Read the ConfigMap
-2. Create ReplicationDestinations
-3. Create destination PVCs with the consistency group label
+1. Use the label selector to find matching PVCs
+2. Create ReplicationDestinations for each PVC
+3. Create destination PVCs with the same labels and specifications
 4. Wait for primary to connect
 
 **Monitor deployment:**
@@ -460,15 +436,16 @@ kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --cont
 | `capacity` | Default capacity for ReplicationDestinations | `"10Gi"` | Yes |
 | `pskSecretName` | Custom PSK secret name | `"my-secret"` | No |
 
-#### Per-PVC Parameters
+#### Per-PVC Configuration
 
-Format: `pvc=<pvc-name>/<namespace>: "key1=value1:key2=value2:key3=value3"`
+PVC configuration is now done through **PVC annotations and labels** instead of ConfigMap:
 
-| Key | Description | Example | Required |
-|-----|-------------|---------|----------|
-| `schedulingInterval` | Sync frequency (cron or duration) | `"5m"` or `"*/5 * * * *"` | Yes |
-| `storageClassName` | Storage class for destination PVC | `"rook-cephfs"` | Yes |
-| `consistencyGroup` | Consistency group label value | `"test-group-1"` | No |
+| Annotation/Label | Description | Example | Default |
+|------------------|-------------|---------|---------|
+| `replication.storage.openshift.io/scheduling-interval` (annotation) | Sync frequency (duration format) | `"5m"` or `"10m"` | `"5m"` |
+| `ramendr.openshift.io/consistency-group` (label) | Consistency group identifier | `"test-group-1"` | (empty) |
+
+**Note:** Storage class and capacity are taken directly from the PVC spec.
 
 ### Configuration Examples
 
