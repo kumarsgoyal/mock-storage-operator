@@ -143,11 +143,6 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		defaultStorageClassName = "standard"
 	}
 
-	defaultVolumeSnapshotClassName := vgrClass.Spec.Parameters["volumeSnapshotClassName"]
-	if defaultVolumeSnapshotClassName == "" {
-		defaultVolumeSnapshotClassName = "csi-snapclass"
-	}
-
 	// Create or update ConfigMap with PVC entries
 	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
 	if configMapName == "" {
@@ -155,7 +150,7 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 	}
 
 	if err := r.reconcilePVCConfigMap(ctx, logger, vgr, pvcList, configMapName,
-		defaultSchedulingInterval, defaultStorageClassName, defaultVolumeSnapshotClassName); err != nil {
+		defaultSchedulingInterval, defaultStorageClassName); err != nil {
 		logger.Error(err, "Failed to reconcile PVC ConfigMap")
 		return ctrl.Result{}, err
 	}
@@ -239,7 +234,6 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 	configMapName string,
 	defaultSchedulingInterval string,
 	defaultStorageClassName string,
-	defaultVolumeSnapshotClassName string,
 ) error {
 	// Build ConfigMap data from PVC list
 	configMapData := make(map[string]string)
@@ -258,11 +252,10 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 		// Get consistency group label value
 		consistencyGroup := pvc.Labels["ramendr.openshift.io/consistency-group"]
 
-		// Build value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>,consistencyGroup:<value>"
-		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,volumeSnapshotClassName:%s,consistencyGroup:%s",
+		// Build value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
+		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,consistencyGroup:%s",
 			defaultSchedulingInterval,
 			defaultStorageClassName,
-			defaultVolumeSnapshotClassName,
 			consistencyGroup,
 		)
 
@@ -313,18 +306,17 @@ func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
 
 // PVCConfig holds the parsed configuration for a single PVC
 type PVCConfig struct {
-	Name                    string
-	Namespace               string
-	SchedulingInterval      string
-	StorageClassName        string
-	VolumeSnapshotClassName string
-	ConsistencyGroup        string // Value of ramendr.openshift.io/consistency-group label
+	Name               string
+	Namespace          string
+	SchedulingInterval string
+	StorageClassName   string
+	ConsistencyGroup   string // Value of ramendr.openshift.io/consistency-group label
 }
 
 // parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
 // Expected format:
 // Key: "pvc.<pvc-name>.<namespace>"
-// Value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>"
+// Value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
 func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Logger) ([]PVCConfig, error) {
 	configs := []PVCConfig{}
 
@@ -345,7 +337,7 @@ func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Lo
 		pvcName := parts[0]
 		namespace := parts[1]
 
-		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,volumeSnapshotClassName:<value>,consistencyGroup:<value>"
+		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
 		config := PVCConfig{
 			Name:      pvcName,
 			Namespace: namespace,
@@ -363,8 +355,6 @@ func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Lo
 				config.SchedulingInterval = kv[1]
 			case "storageClassName":
 				config.StorageClassName = kv[1]
-			case "volumeSnapshotClassName":
-				config.VolumeSnapshotClassName = kv[1]
 			case "consistencyGroup":
 				config.ConsistencyGroup = kv[1]
 			}

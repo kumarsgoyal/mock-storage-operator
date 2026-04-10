@@ -92,8 +92,7 @@ kubectl get storageclass
 ```
 
 You'll need:
-- A storage class for PVC provisioning, for now, for drenv, use `rook-cephfs-fs1` 
-- A volume snapshot class for snapshots (e.g., `csi-cephfsplugin-snapclass`)
+- A storage class for PVC provisioning, for now, for drenv, use `rook-cephfs-fs1`
 
 > [!IMPORTANT]
 > **For now, use cephfs StorageClass. We'll switch to LSO/LVM later.**
@@ -469,7 +468,7 @@ Format: `pvc=<pvc-name>/<namespace>: "key1=value1:key2=value2:key3=value3"`
 |-----|-------------|---------|----------|
 | `schedulingInterval` | Sync frequency (cron or duration) | `"5m"` or `"*/5 * * * *"` | Yes |
 | `storageClassName` | Storage class for destination PVC | `"rook-cephfs"` | Yes |
-| `volumeSnapshotClassName` | Snapshot class for source snapshots | `"csi-cephfsplugin-snapclass"` | Yes |
+| `consistencyGroup` | Consistency group label value | `"test-group-1"` | No |
 
 ### Configuration Examples
 
@@ -478,7 +477,7 @@ Format: `pvc=<pvc-name>/<namespace>: "key1=value1:key2=value2:key3=value3"`
 ```yaml
 parameters:
   capacity: "10Gi"
-  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=rook-cephfs:volumeSnapshotClassName=csi-snapclass"
+  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=rook-cephfs:consistencyGroup=test-group-1"
 ```
 
 #### Example 2: Multiple PVCs with different schedules
@@ -487,11 +486,11 @@ parameters:
 parameters:
   capacity: "10Gi"
   # Database - sync every 5 minutes
-  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=fast-ssd:volumeSnapshotClassName=csi-snapclass"
+  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=fast-ssd:consistencyGroup=test-group-1"
   # Application data - sync every 15 minutes
-  pvc=app-data/myapp: "schedulingInterval=15m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+  pvc=app-data/myapp: "schedulingInterval=15m:storageClassName=standard:consistencyGroup=test-group-1"
   # Logs - sync every hour
-  pvc=logs/myapp: "schedulingInterval=1h:storageClassName=slow-hdd:volumeSnapshotClassName=csi-snapclass"
+  pvc=logs/myapp: "schedulingInterval=1h:storageClassName=slow-hdd:consistencyGroup=test-group-1"
 ```
 
 #### Example 3: Using cron expressions
@@ -500,11 +499,11 @@ parameters:
 parameters:
   capacity: "10Gi"
   # Sync every 5 minutes
-  pvc=data1/myapp: "schedulingInterval=*/5 * * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+  pvc=data1/myapp: "schedulingInterval=*/5 * * * *:storageClassName=standard:consistencyGroup=test-group-1"
   # Sync every hour at minute 0
-  pvc=data2/myapp: "schedulingInterval=0 * * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+  pvc=data2/myapp: "schedulingInterval=0 * * * *:storageClassName=standard:consistencyGroup=test-group-1"
   # Sync daily at 2 AM
-  pvc=data3/myapp: "schedulingInterval=0 2 * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+  pvc=data3/myapp: "schedulingInterval=0 2 * * *:storageClassName=standard:consistencyGroup=test-group-1"
 ```
 
 ---
@@ -554,7 +553,7 @@ parameters:
      provisioner: mock.storage.io
      parameters:
        capacity: "10Gi"
-       pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+       pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=standard:consistencyGroup=test-group-1"
    EOF
    ```
 
@@ -647,11 +646,11 @@ spec:
   parameters:
     capacity: "10Gi"
     # Database - critical, sync every 5 minutes
-    pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=fast-ssd:volumeSnapshotClassName=csi-snapclass"
+    pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=fast-ssd:consistencyGroup=test-group-1"
     # Config - moderate, sync every 15 minutes
-    pvc=app-config/myapp: "schedulingInterval=15m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+    pvc=app-config/myapp: "schedulingInterval=15m:storageClassName=standard:consistencyGroup=test-group-1"
     # Logs - low priority, sync hourly
-    pvc=logs/myapp: "schedulingInterval=1h:storageClassName=slow-hdd:volumeSnapshotClassName=csi-snapclass"
+    pvc=logs/myapp: "schedulingInterval=1h:storageClassName=slow-hdd:consistencyGroup=test-group-1"
 ```
 
 Follow the same deployment steps as Scenario 1, but ensure all PVCs have the `app: myapp` label.
@@ -764,7 +763,7 @@ kubectl label pvc <pvc-name> -n <namespace> app=myapp
 kubectl get volumegroupreplicationclass mock-vgr-class -o yaml
 
 # Verify parameter format:
-# pvc=<name>/<namespace>: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
+# pvc=<name>/<namespace>: "schedulingInterval=<value>:storageClassName=<value>:consistencyGroup=<value>"
 
 # Fix parameter format if incorrect
 kubectl edit volumegroupreplicationclass mock-vgr-class
@@ -897,7 +896,7 @@ spec:
   provisioner: mock.storage.io
   parameters:
     capacity: "5Gi"
-    pvc=demo-data/demo-app: "schedulingInterval=3m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+    pvc=demo-data/demo-app: "schedulingInterval=3m:storageClassName=standard:consistencyGroup=demo-group"
 EOF
 ```
 

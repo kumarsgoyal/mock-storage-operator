@@ -438,10 +438,9 @@ func (v *VSHandler) createOrUpdateRS(
 			KeySecret: &pskSecretName,
 			Address:   &remoteAddress,
 			ReplicationSourceVolumeOptions: volsyncv1alpha1.ReplicationSourceVolumeOptions{
-				CopyMethod:              volsyncv1alpha1.CopyMethodSnapshot,
-				StorageClassName:        storageClassName,
-				AccessModes:             accessModes,
-				VolumeSnapshotClassName: volumeSnapshotClassName,
+				CopyMethod:       volsyncv1alpha1.CopyMethodSnapshot,
+				StorageClassName: storageClassName,
+				AccessModes:      accessModes,
 			},
 		}
 
