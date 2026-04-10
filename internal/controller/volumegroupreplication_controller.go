@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	volrep "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
@@ -11,7 +10,6 @@ import (
 	"github.com/ramendr/mock-storage-operator/internal/volsync"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -143,18 +141,6 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		defaultStorageClassName = "standard"
 	}
 
-	// Create or update ConfigMap with PVC entries
-	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
-	if configMapName == "" {
-		configMapName = PVCConfigMapName
-	}
-
-	if err := r.reconcilePVCConfigMap(ctx, logger, vgr, pvcList, configMapName,
-		defaultSchedulingInterval, defaultStorageClassName); err != nil {
-		logger.Error(err, "Failed to reconcile PVC ConfigMap")
-		return ctrl.Result{}, err
-	}
-
 	// Create VolSync handler
 	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, defaultSchedulingInterval)
 
@@ -221,150 +207,11 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Primary reconcile complete", "protectedPVCs", len(protectedPVCs), "configMap", configMapName)
+	logger.Info("Primary reconcile complete", "protectedPVCs", len(protectedPVCs))
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
-// reconcilePVCConfigMap creates or updates a ConfigMap with entries for each PVC
-func (r *VolumeGroupReplicationReconciler) reconcilePVCConfigMap(
-	ctx context.Context,
-	logger logr.Logger,
-	vgr *volrep.VolumeGroupReplication,
-	pvcList *corev1.PersistentVolumeClaimList,
-	configMapName string,
-	defaultSchedulingInterval string,
-	defaultStorageClassName string,
-) error {
-	// Build ConfigMap data from PVC list
-	configMapData := make(map[string]string)
-
-	for i := range pvcList.Items {
-		pvc := &pvcList.Items[i]
-
-		// Skip PVCs owned by VolSync
-		if isVolSyncOwned(pvc) {
-			continue
-		}
-
-		// Build key: "pvc.<pvc-name>.<namespace>" (ConfigMap keys must match [-._a-zA-Z0-9]+)
-		key := fmt.Sprintf("pvc.%s.%s", pvc.Name, pvc.Namespace)
-
-		// Get consistency group label value
-		consistencyGroup := pvc.Labels["ramendr.openshift.io/consistency-group"]
-
-		// Build value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
-		value := fmt.Sprintf("schedulingInterval:%s,storageClassName:%s,consistencyGroup:%s",
-			defaultSchedulingInterval,
-			defaultStorageClassName,
-			consistencyGroup,
-		)
-
-		configMapData[key] = value
-	}
-
-	// Get or create ConfigMap
-	configMap := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: vgr.Namespace}, configMap)
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new ConfigMap
-			configMap = &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
-					Namespace: vgr.Namespace,
-				},
-				Data: configMapData,
-			}
-
-			// Set VGR as owner
-			if err := controllerutil.SetControllerReference(vgr, configMap, r.Scheme); err != nil {
-				return fmt.Errorf("failed to set controller reference: %w", err)
-			}
-
-			if err := r.Create(ctx, configMap); err != nil {
-				return fmt.Errorf("failed to create ConfigMap: %w", err)
-			}
-
-			logger.Info("Created PVC ConfigMap", "configMap", configMapName, "pvcCount", len(configMapData))
-			return nil
-		}
-		return fmt.Errorf("failed to get ConfigMap: %w", err)
-	}
-
-	// Update existing ConfigMap
-	configMap.Data = configMapData
-	if err := r.Update(ctx, configMap); err != nil {
-		return fmt.Errorf("failed to update ConfigMap: %w", err)
-	}
-
-	logger.Info("Updated PVC ConfigMap", "configMap", configMapName, "pvcCount", len(configMapData))
-	return nil
-}
-
 // ── SECONDARY ────────────────────────────────────────────────────────────────
-
-// PVCConfig holds the parsed configuration for a single PVC
-type PVCConfig struct {
-	Name               string
-	Namespace          string
-	SchedulingInterval string
-	StorageClassName   string
-	ConsistencyGroup   string // Value of ramendr.openshift.io/consistency-group label
-}
-
-// parsePVCConfigFromConfigMap parses the ConfigMap data to extract PVC configurations
-// Expected format:
-// Key: "pvc.<pvc-name>.<namespace>"
-// Value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
-func parsePVCConfigFromConfigMap(configMapData map[string]string, logger logr.Logger) ([]PVCConfig, error) {
-	configs := []PVCConfig{}
-
-	for key, value := range configMapData {
-		// Parse key: "pvc.<pvc-name>.<namespace>"
-		if !strings.HasPrefix(key, "pvc.") {
-			continue
-		}
-
-		// Remove "pvc." prefix and split by "."
-		pvcInfo := strings.TrimPrefix(key, "pvc.")
-		parts := strings.SplitN(pvcInfo, ".", 2)
-		if len(parts) != 2 {
-			logger.Error(fmt.Errorf("invalid key format"), "Expected 'pvc.<name>.<namespace>'", "key", key)
-			continue
-		}
-
-		pvcName := parts[0]
-		namespace := parts[1]
-
-		// Parse value: "schedulingInterval:<value>,storageClassName:<value>,consistencyGroup:<value>"
-		config := PVCConfig{
-			Name:      pvcName,
-			Namespace: namespace,
-		}
-
-		valueParts := strings.Split(value, ",")
-		for _, part := range valueParts {
-			kv := strings.SplitN(part, ":", 2)
-			if len(kv) != 2 {
-				continue
-			}
-
-			switch kv[0] {
-			case "schedulingInterval":
-				config.SchedulingInterval = kv[1]
-			case "storageClassName":
-				config.StorageClassName = kv[1]
-			case "consistencyGroup":
-				config.ConsistencyGroup = kv[1]
-			}
-		}
-
-		configs = append(configs, config)
-	}
-
-	return configs, nil
-}
 
 func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	ctx context.Context,
@@ -375,30 +222,44 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
 	logger.V(1).Info("Reconciling as secondary")
 
-	configMapName := vgrClass.Spec.Parameters["pvcConfigMap"]
-	if configMapName == "" {
-		configMapName = PVCConfigMapName
-	}
-
-	// Get the ConfigMap
-	configMap := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: vgr.Namespace}, configMap); err != nil {
-		logger.Error(err, "Failed to get ConfigMap", "configMap", configMapName, "namespace", vgr.Namespace)
-		return ctrl.Result{}, err
-	}
-
-	// Parse PVC configurations from ConfigMap
-	pvcConfigs, err := parsePVCConfigFromConfigMap(configMap.Data, logger)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if len(pvcConfigs) == 0 {
-		logger.Info("No PVC configurations found in ConfigMap", "configMap", configMapName)
+	// Get PVCs based on selector (same as primary)
+	if vgr.Spec.Source.Selector == nil {
+		logger.Info("No PVC selector specified")
 		return ctrl.Result{RequeueAfter: requeueInterval}, nil
 	}
 
-	logger.Info("Found PVC configurations", "count", len(pvcConfigs), "configMap", configMapName)
+	sel, err := metav1.LabelSelectorAsSelector(vgr.Spec.Source.Selector)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("invalid pvcSelector: %w", err)
+	}
+
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	if err := r.List(ctx, pvcList,
+		client.MatchingLabelsSelector{Selector: sel},
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if len(pvcList.Items) == 0 {
+		logger.Info("No PVCs found matching selector")
+		return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	}
+
+	logger.Info("Found PVCs matching selector", "count", len(pvcList.Items))
+
+	// Get default configuration from VGRClass
+	defaultSchedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
+	if defaultSchedulingInterval == "" {
+		defaultSchedulingInterval = vgrClass.Spec.Parameters["schedule"]
+		if defaultSchedulingInterval == "" {
+			defaultSchedulingInterval = "5m" // Default to 5 minutes
+		}
+	}
+
+	defaultStorageClassName := vgrClass.Spec.Parameters["storageClassName"]
+	if defaultStorageClassName == "" {
+		defaultStorageClassName = "standard"
+	}
 
 	// Get default capacity from VGRClass parameters
 	defaultCapacity := vgrClass.Spec.Parameters["capacity"]
@@ -416,33 +277,38 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	protectedPVCs := []corev1.LocalObjectReference{}
 	allReady := true
 
-	for _, pvcConfig := range pvcConfigs {
-		// Verify the PVC is in the same namespace as the VGR
-		if pvcConfig.Namespace != vgr.Namespace {
-			logger.Info("Skipping PVC from different namespace", "pvc", pvcConfig.Name, "pvcNamespace", pvcConfig.Namespace, "vgrNamespace", vgr.Namespace)
-			continue
+	for _, pvc := range pvcList.Items {
+		// Extract scheduling interval from annotation (default to 5m if not set)
+		schedulingInterval := "5m"
+		if interval, ok := pvc.Annotations["replication.storage.openshift.io/scheduling-interval"]; ok && interval != "" {
+			schedulingInterval = interval
 		}
 
-		// Create VolSync handler with per-PVC scheduling interval
-		vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, pvcConfig.SchedulingInterval)
+		// Extract consistency group from label
+		consistencyGroup := pvc.Labels["ramendr.openshift.io/consistency-group"]
 
-		// Parse capacity
-		capacityQuantity, err := resource.ParseQuantity(defaultCapacity)
-		if err != nil {
-			logger.Error(err, "Failed to parse capacity", "capacity", defaultCapacity)
-			return ctrl.Result{}, err
+		// Create VolSync handler with per-PVC scheduling interval
+		vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, schedulingInterval)
+
+		// Parse capacity from PVC spec
+		capacityQuantity := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+
+		// Get storage class name from PVC spec
+		storageClassName := ""
+		if pvc.Spec.StorageClassName != nil {
+			storageClassName = *pvc.Spec.StorageClassName
 		}
 
 		// Use VolSync handler to reconcile ReplicationDestination
 		rd, err := vsHandler.ReconcileRD(
-			pvcConfig.Name,
-			pvcConfig.Namespace,
+			pvc.Name,
+			pvc.Namespace,
 			&capacityQuantity,
-			&pvcConfig.StorageClassName,
-			[]corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			&storageClassName,
+			pvc.Spec.AccessModes,
 			pskSecretName,
 			&serviceType,
-			pvcConfig.ConsistencyGroup,
+			consistencyGroup,
 		)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -454,13 +320,13 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 			continue
 		}
 
-		protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvcConfig.Name})
+		protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvc.Name})
 
 		// Log the address and key secret for user to copy to primary
 		if rd.Status != nil && rd.Status.RsyncTLS != nil {
 			if rd.Status.RsyncTLS.Address != nil && rd.Status.RsyncTLS.KeySecret != nil {
 				logger.Info("ReplicationDestination ready",
-					"pvc", pvcConfig.Name,
+					"pvc", pvc.Name,
 					"address", *rd.Status.RsyncTLS.Address,
 					"keySecret", *rd.Status.RsyncTLS.KeySecret)
 			}
