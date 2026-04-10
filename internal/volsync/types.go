@@ -8,7 +8,7 @@ import (
 // Constants for VolSync operations
 const (
 	// DefaultCopyMethod is the default copy method for VolSync replication
-	DefaultCopyMethod = volsyncv1alpha1.CopyMethodSnapshot
+	DefaultCopyMethod = volsyncv1alpha1.CopyMethodDirect
 
 	// DefaultServiceType is the default service type for ReplicationDestination
 	DefaultServiceType = corev1.ServiceTypeLoadBalancer

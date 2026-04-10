@@ -333,7 +333,7 @@ func (v *VSHandler) createOrUpdateRD(
 			ServiceType: serviceType,
 			KeySecret:   &pskSecretName,
 			ReplicationDestinationVolumeOptions: volsyncv1alpha1.ReplicationDestinationVolumeOptions{
-				CopyMethod:       volsyncv1alpha1.CopyMethodSnapshot,
+				CopyMethod:       volsyncv1alpha1.CopyMethodDirect,
 				Capacity:         capacity,
 				StorageClassName: storageClassName,
 				AccessModes:      accessModes,
@@ -438,7 +438,7 @@ func (v *VSHandler) createOrUpdateRS(
 			KeySecret: &pskSecretName,
 			Address:   &remoteAddress,
 			ReplicationSourceVolumeOptions: volsyncv1alpha1.ReplicationSourceVolumeOptions{
-				CopyMethod:       volsyncv1alpha1.CopyMethodSnapshot,
+				CopyMethod:       volsyncv1alpha1.CopyMethodDirect,
 				StorageClassName: storageClassName,
 				AccessModes:      accessModes,
 			},
