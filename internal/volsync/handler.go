@@ -15,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -91,11 +90,6 @@ func (v *VSHandler) ReconcileRD(
 		return nil, err
 	}
 
-	// Clear PVC ownership if owned by RS (transitioning from primary to secondary)
-	if err := v.clearPVCOwnershipIfWrongType(pvcName, pvcNamespace, "ReplicationSource"); err != nil {
-		return nil, err
-	}
-
 	// Check if a ReplicationSource is still here (Can happen if transitioning from primary to secondary)
 	// Before creating a new RD for this PVC, make sure any ReplicationSource for this PVC is cleaned up first
 	err = v.DeleteRS(pvcName)
@@ -112,11 +106,6 @@ func (v *VSHandler) ReconcileRD(
 	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
 	err = v.ensureDestinationPVC(pvcName, pvcNamespace, capacity, storageClassName, accessModes, consistencyGroup)
 	if err != nil {
-		return nil, err
-	}
-
-	// Set RD as owner of the PVC (only if not already owned by RD)
-	if err := v.setPVCOwnerIfNeeded(pvcName, pvcNamespace, rd, "ReplicationDestination"); err != nil {
 		return nil, err
 	}
 
@@ -211,99 +200,6 @@ func (v *VSHandler) ensureDestinationPVC(
 	return nil
 }
 
-// clearPVCOwnershipIfWrongType clears PVC ownership only if owned by the wrong type
-// wrongType should be "ReplicationSource" or "ReplicationDestination"
-// This avoids unnecessary updates during normal reconciliation
-func (v *VSHandler) clearPVCOwnershipIfWrongType(pvcName, pvcNamespace string, wrongType string) error {
-	l := v.log.WithValues("pvcName", pvcName, "wrongType", wrongType)
-
-	pvc := &corev1.PersistentVolumeClaim{}
-	err := v.client.Get(v.ctx, types.NamespacedName{
-		Name:      pvcName,
-		Namespace: pvcNamespace,
-	}, pvc)
-	if err != nil {
-		if kerrors.IsNotFound(err) {
-			// PVC doesn't exist yet, nothing to clear
-			l.V(1).Info("PVC not found, nothing to clear")
-			return nil
-		}
-		return fmt.Errorf("failed to get PVC: %w", err)
-	}
-
-	// Check if PVC is owned by the wrong type
-	needsClear := false
-	for _, ownerRef := range pvc.OwnerReferences {
-		if ownerRef.Kind == wrongType {
-			needsClear = true
-			break
-		}
-	}
-
-	if needsClear {
-		pvc.OwnerReferences = []metav1.OwnerReference{}
-		if err := v.client.Update(v.ctx, pvc); err != nil {
-			return fmt.Errorf("failed to clear PVC ownership: %w", err)
-		}
-		l.Info("Cleared PVC ownership (was owned by wrong type)", "previousOwnerType", wrongType)
-	} else {
-		l.V(1).Info("PVC not owned by wrong type, no need to clear")
-	}
-
-	return nil
-}
-
-// setPVCOwnerIfNeeded sets the owner reference only if not already owned by correct type
-// expectedType should be "ReplicationSource" or "ReplicationDestination"
-// This avoids unnecessary updates during normal reconciliation
-func (v *VSHandler) setPVCOwnerIfNeeded(pvcName, pvcNamespace string, owner client.Object, expectedType string) error {
-	l := v.log.WithValues("pvcName", pvcName, "expectedType", expectedType, "ownerName", owner.GetName())
-
-	pvc := &corev1.PersistentVolumeClaim{}
-	err := v.client.Get(v.ctx, types.NamespacedName{
-		Name:      pvcName,
-		Namespace: pvcNamespace,
-	}, pvc)
-	if err != nil {
-		if kerrors.IsNotFound(err) {
-			// PVC doesn't exist yet
-			l.V(1).Info("PVC not found, cannot set owner")
-			return nil
-		}
-		return fmt.Errorf("failed to get PVC: %w", err)
-	}
-
-	// Check if already owned by the correct type
-	alreadyOwned := false
-	for _, ownerRef := range pvc.OwnerReferences {
-		if ownerRef.Kind == expectedType && ownerRef.Name == owner.GetName() {
-			alreadyOwned = true
-			break
-		}
-	}
-
-	if alreadyOwned {
-		l.V(1).Info("PVC already owned by correct type, no update needed")
-		return nil
-	}
-
-	// Set the owner reference
-	if err := ctrl.SetControllerReference(owner, pvc, v.client.Scheme()); err != nil {
-		return fmt.Errorf("failed to set controller reference: %w", err)
-	}
-
-	pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
-	pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
-
-	if err := v.client.Update(v.ctx, pvc); err != nil {
-		return fmt.Errorf("failed to update PVC with owner: %w", err)
-	}
-
-	l.Info("Set PVC owner", "ownerType", expectedType, "ownerName", owner.GetName())
-
-	return nil
-}
-
 // createOrUpdateRD creates or updates a ReplicationDestination
 func (v *VSHandler) createOrUpdateRD(
 	pvcName, pvcNamespace string,
@@ -369,11 +265,6 @@ func (v *VSHandler) ReconcileRS(
 		return nil, err
 	}
 
-	// Clear PVC ownership if owned by RD (transitioning from secondary to primary)
-	if err := v.clearPVCOwnershipIfWrongType(pvcName, pvcNamespace, "ReplicationDestination"); err != nil {
-		return nil, err
-	}
-
 	// Check if a ReplicationDestination is still here (Can happen if transitioning from secondary to primary)
 	// Before creating a new RS for this PVC, make sure any ReplicationDestination for this PVC is cleaned up first
 	err = v.DeleteRD(pvcName)
@@ -383,11 +274,6 @@ func (v *VSHandler) ReconcileRS(
 
 	replicationSource, err := v.createOrUpdateRS(pvcName, pvcNamespace, remoteAddress, pskSecretName, storageClassName, accessModes, volumeSnapshotClassName)
 	if err != nil {
-		return nil, err
-	}
-
-	// Set RS as owner of the PVC (only if not already owned by RS)
-	if err := v.setPVCOwnerIfNeeded(pvcName, pvcNamespace, replicationSource, "ReplicationSource"); err != nil {
 		return nil, err
 	}
 
@@ -646,6 +532,29 @@ func (v *VSHandler) DeleteRDByLabel() error {
 	}
 
 	v.log.Info("Deleted ReplicationDestinations", "count", len(rdList.Items))
+	return nil
+}
+
+// DeletePVCsByLabel deletes all PVCs with the volumegroupreplication-owner label
+func (v *VSHandler) DeletePVCsByLabel() error {
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	
+	// List PVCs with the owner label
+	labelSelector := client.MatchingLabels{VRGOwnerLabel: v.owner.GetName()}
+	if err := v.client.List(v.ctx, pvcList, labelSelector); err != nil {
+		return fmt.Errorf("failed to list PVCs by label: %w", err)
+	}
+
+	for i := range pvcList.Items {
+		pvc := &pvcList.Items[i]
+		v.log.Info("Deleting PVC", "name", pvc.Name, "namespace", pvc.Namespace)
+		if err := v.client.Delete(v.ctx, pvc); err != nil && !kerrors.IsNotFound(err) {
+			v.log.Error(err, "Failed to delete PVC", "name", pvc.Name, "namespace", pvc.Namespace)
+			return fmt.Errorf("failed to delete PVC %s/%s: %w", pvc.Namespace, pvc.Name, err)
+		}
+	}
+
+	v.log.Info("Deleted PVCs", "count", len(pvcList.Items))
 	return nil
 }
 

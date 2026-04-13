@@ -363,7 +363,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 	logger logr.Logger,
 	vgr *volrep.VolumeGroupReplication,
 ) (ctrl.Result, error) {
-	logger.Info("VolumeGroupReplication being deleted — cleaning up RS/RD resources by label")
+	logger.Info("VolumeGroupReplication being deleted — cleaning up RS/RD/PVC resources by label")
 
 	// Create VSHandler to delete resources by label
 	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, "")
@@ -377,6 +377,12 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 	// Delete all ReplicationDestinations with the owner label
 	if err := vsHandler.DeleteRDByLabel(); err != nil {
 		logger.Error(err, "Failed to delete ReplicationDestinations by label")
+		return ctrl.Result{}, err
+	}
+
+	// Delete all PVCs with the volumegroupreplication-owner label
+	if err := vsHandler.DeletePVCsByLabel(); err != nil {
+		logger.Error(err, "Failed to delete PVCs by label")
 		return ctrl.Result{}, err
 	}
 
