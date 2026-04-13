@@ -200,6 +200,51 @@ func (v *VSHandler) ensureDestinationPVC(
 	return nil
 }
 
+// ensurePVCLabels ensures the PVC has required labels for replication
+func (v *VSHandler) ensurePVCLabels(pvcName, pvcNamespace string) error {
+	l := v.log.WithValues("pvcName", pvcName)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			l.V(1).Info("PVC not found, cannot add labels")
+			return nil
+		}
+		return fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	// Check if labels need to be added
+	needsUpdate := false
+	if pvc.Labels == nil {
+		pvc.Labels = make(map[string]string)
+	}
+
+	if pvc.Labels["apps.open-cluster-management.io/do-not-delete"] != "true" {
+		pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
+		needsUpdate = true
+	}
+
+	if pvc.Labels[VRGOwnerLabel] != v.owner.GetName() {
+		pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
+		needsUpdate = true
+	}
+
+	if needsUpdate {
+		if err := v.client.Update(v.ctx, pvc); err != nil {
+			return fmt.Errorf("failed to update PVC labels: %w", err)
+		}
+		l.Info("Added required labels to PVC")
+	} else {
+		l.V(1).Info("PVC already has required labels")
+	}
+
+	return nil
+}
+
 // createOrUpdateRD creates or updates a ReplicationDestination
 func (v *VSHandler) createOrUpdateRD(
 	pvcName, pvcNamespace string,
@@ -269,6 +314,11 @@ func (v *VSHandler) ReconcileRS(
 	// Before creating a new RS for this PVC, make sure any ReplicationDestination for this PVC is cleaned up first
 	err = v.DeleteRD(pvcName)
 	if err != nil {
+		return nil, err
+	}
+
+	// Ensure PVC has required labels before creating RS
+	if err := v.ensurePVCLabels(pvcName, pvcNamespace); err != nil {
 		return nil, err
 	}
 
