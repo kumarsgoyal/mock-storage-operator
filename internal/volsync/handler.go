@@ -86,7 +86,7 @@ func (v *VSHandler) ReconcileRD(
 	l := v.log.WithValues("pvcName", pvcName)
 
 	// Validate that the PSK secret exists
-	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName)
+	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName, pvcNamespace)
 	if err != nil || !secretExists {
 		return nil, err
 	}
@@ -183,6 +183,8 @@ func (v *VSHandler) ensureDestinationPVC(
 				pvc.Labels = make(map[string]string)
 			}
 			pvc.Labels["ramendr.openshift.io/consistency-group"] = consistencyGroup
+			pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
+			pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
 		}
 
 		// Only set spec fields if PVC is being created (not already exists)
@@ -290,6 +292,9 @@ func (v *VSHandler) setPVCOwnerIfNeeded(pvcName, pvcNamespace string, owner clie
 		return fmt.Errorf("failed to set controller reference: %w", err)
 	}
 
+	pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
+	pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
+
 	if err := v.client.Update(v.ctx, pvc); err != nil {
 		return fmt.Errorf("failed to update PVC with owner: %w", err)
 	}
@@ -322,11 +327,6 @@ func (v *VSHandler) createOrUpdateRD(
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, rd, func() error {
-		// if err := ctrl.SetControllerReference(v.owner, rd, v.client.Scheme()); err != nil {
-		// 	l.Error(err, "unable to set controller reference")
-		// 	return fmt.Errorf("%w", err)
-		// }
-
 		addVRGOwnerLabel(v.owner, rd)
 
 		rd.Spec.RsyncTLS = &volsyncv1alpha1.ReplicationDestinationRsyncTLSSpec{
@@ -364,7 +364,7 @@ func (v *VSHandler) ReconcileRS(
 	l := v.log.WithValues("pvcName", pvcName)
 
 	// Validate that the PSK secret exists
-	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName)
+	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName, pvcNamespace)
 	if err != nil || !secretExists {
 		return nil, err
 	}
@@ -415,11 +415,6 @@ func (v *VSHandler) createOrUpdateRS(
 	}
 
 	op, err := ctrlutil.CreateOrUpdate(v.ctx, v.client, rs, func() error {
-		// if err := ctrl.SetControllerReference(v.owner, rs, v.client.Scheme()); err != nil {
-		// 	l.Error(err, "unable to set controller reference")
-		// 	return fmt.Errorf("%w", err)
-		// }
-
 		addVRGOwnerLabel(v.owner, rs)
 
 		rs.Spec.SourcePVC = pvcName
@@ -457,19 +452,19 @@ func (v *VSHandler) createOrUpdateRS(
 
 // validateSecretAndAddOwnerRef validates that a secret exists and adds owner reference
 // The secret must be pre-created by the user
-func (v *VSHandler) validateSecretAndAddOwnerRef(secretName string) (bool, error) {
+func (v *VSHandler) validateSecretAndAddOwnerRef(secretName, secretNamespace string) (bool, error) {
 	secret := &corev1.Secret{}
 
 	err := v.client.Get(v.ctx,
 		types.NamespacedName{
 			Name:      secretName,
-			Namespace: v.owner.GetNamespace(),
+			Namespace: secretNamespace,
 		}, secret)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
 			v.log.Error(err, "Secret not found - must be pre-created", "secretName", secretName)
 			return false, fmt.Errorf("secret %s not found in namespace %s - must be created before replication",
-				secretName, v.owner.GetNamespace())
+				secretName, secretNamespace)
 		}
 
 		v.log.Error(err, "Failed to get secret", "secretName", secretName)
@@ -479,10 +474,10 @@ func (v *VSHandler) validateSecretAndAddOwnerRef(secretName string) (bool, error
 	v.log.Info("Secret exists", "secretName", secretName)
 
 	// Add owner reference
-	if err := v.addOwnerReferenceAndUpdate(secret, v.owner); err != nil {
-		v.log.Error(err, "Unable to update secret", "secretName", secretName)
-		return true, err
-	}
+	// if err := v.addOwnerReferenceAndUpdate(secret, v.owner); err != nil {
+	// 	v.log.Error(err, "Unable to update secret", "secretName", secretName)
+	// 	return true, err
+	// }
 
 	v.log.V(1).Info("VolSync secret validated", "secret name", secretName)
 
