@@ -172,8 +172,13 @@ func (v *VSHandler) ensureDestinationPVC(
 				pvc.Labels = make(map[string]string)
 			}
 			pvc.Labels["ramendr.openshift.io/consistency-group"] = consistencyGroup
-			pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
 			pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
+			
+			// Set do-not-delete annotation
+			if pvc.Annotations == nil {
+				pvc.Annotations = make(map[string]string)
+			}
+			pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] = "true"
 		}
 
 		// Only set spec fields if PVC is being created (not already exists)
@@ -217,17 +222,26 @@ func (v *VSHandler) ensurePVCLabels(pvcName, pvcNamespace string) error {
 		return fmt.Errorf("failed to get PVC: %w", err)
 	}
 
-	// Check if labels need to be added
+	// Check if labels and annotations need to be added
 	needsUpdate := false
+	
+	// Ensure labels map exists
 	if pvc.Labels == nil {
 		pvc.Labels = make(map[string]string)
 	}
 
-	if pvc.Labels["apps.open-cluster-management.io/do-not-delete"] != "true" {
-		pvc.Labels["apps.open-cluster-management.io/do-not-delete"] = "true"
+	// Ensure annotations map exists
+	if pvc.Annotations == nil {
+		pvc.Annotations = make(map[string]string)
+	}
+
+	// Check and add do-not-delete annotation
+	if pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] != "true" {
+		pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] = "true"
 		needsUpdate = true
 	}
 
+	// Check and add VRG owner label
 	if pvc.Labels[VRGOwnerLabel] != v.owner.GetName() {
 		pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
 		needsUpdate = true
@@ -235,11 +249,11 @@ func (v *VSHandler) ensurePVCLabels(pvcName, pvcNamespace string) error {
 
 	if needsUpdate {
 		if err := v.client.Update(v.ctx, pvc); err != nil {
-			return fmt.Errorf("failed to update PVC labels: %w", err)
+			return fmt.Errorf("failed to update PVC labels/annotations: %w", err)
 		}
-		l.Info("Added required labels to PVC")
+		l.Info("Added required labels and annotations to PVC")
 	} else {
-		l.V(1).Info("PVC already has required labels")
+		l.V(1).Info("PVC already has required labels and annotations")
 	}
 
 	return nil
