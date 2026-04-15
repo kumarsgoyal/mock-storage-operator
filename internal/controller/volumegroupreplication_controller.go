@@ -164,7 +164,7 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 
 		// Use Submariner service name for remote address
 		// The remote service name follows the pattern: <service-name>.<namespace>.svc.clusterset.local
-		remoteAddress := volsync.GetRemoteServiceNameForRDFromPVCName(pvc.Name, vgr.Namespace)
+		remoteAddress := volsync.GetRemoteServiceNameForRDFromPVCName(pvc.Name, pvc.Namespace)
 
 		// Get VolumeSnapshotClassName from parameters (optional)
 		var volumeSnapshotClassName *string
