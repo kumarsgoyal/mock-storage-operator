@@ -173,12 +173,6 @@ func (v *VSHandler) ensureDestinationPVC(
 			}
 			pvc.Labels["ramendr.openshift.io/consistency-group"] = consistencyGroup
 			pvc.Labels[VRGOwnerLabel] = v.owner.GetName()
-			
-			// Set do-not-delete annotation
-			if pvc.Annotations == nil {
-				pvc.Annotations = make(map[string]string)
-			}
-			pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] = "true"
 		}
 
 		// Only set spec fields if PVC is being created (not already exists)
@@ -228,17 +222,6 @@ func (v *VSHandler) ensurePVCLabels(pvcName, pvcNamespace string) error {
 	// Ensure labels map exists
 	if pvc.Labels == nil {
 		pvc.Labels = make(map[string]string)
-	}
-
-	// Ensure annotations map exists
-	if pvc.Annotations == nil {
-		pvc.Annotations = make(map[string]string)
-	}
-
-	// Check and add do-not-delete annotation
-	if pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] != "true" {
-		pvc.Annotations["apps.open-cluster-management.io/do-not-delete"] = "true"
-		needsUpdate = true
 	}
 
 	// Check and add VRG owner label
