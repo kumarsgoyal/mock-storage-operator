@@ -18,9 +18,10 @@ docker-push:
 	$(CONTAINER_TOOL) push $(IMG)
 
 # Build and push AMD64 image to Quay.io
+# Platform is specified in Dockerfile for better caching
 quay-push:
-	@echo "Building AMD64 image..."
-	$(CONTAINER_TOOL) build --platform linux/amd64 \
+	@echo "Building AMD64 image (platform specified in Dockerfile)..."
+	$(CONTAINER_TOOL) build \
 		-t quay.io/bmekhiss/mock-storage-operator:$(VERSION) .
 	@echo "Pushing image..."
 	$(CONTAINER_TOOL) push quay.io/bmekhiss/mock-storage-operator:$(VERSION)
