@@ -187,11 +187,15 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 			return ctrl.Result{}, err
 		}
 
-		protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvc.Name})
+		// Only add to protectedPVCs if RS was created (not nil)
+		// RS will be nil if PVC is terminating
+		if rs != nil {
+			protectedPVCs = append(protectedPVCs, corev1.LocalObjectReference{Name: pvc.Name})
 
-		// Get last sync time from ReplicationSource status
-		if rs != nil && rs.Status != nil {
-			latestSync = rs.Status.LastSyncTime
+			// Get last sync time from ReplicationSource status
+			if rs.Status != nil {
+				latestSync = rs.Status.LastSyncTime
+			}
 		}
 	}
 

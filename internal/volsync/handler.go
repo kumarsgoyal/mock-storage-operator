@@ -310,6 +310,21 @@ func (v *VSHandler) ReconcileRS(
 ) (*volsyncv1alpha1.ReplicationSource, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
+	// Check if PVC is terminating - if so, delete the RS and return
+	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
+	if err != nil {
+		l.Error(err, "Failed to check if PVC is terminating")
+		return nil, err
+	}
+	if isTerminating {
+		l.Info("PVC is terminating, deleting ReplicationSource")
+		if err := v.DeleteRS(pvcName); err != nil {
+			l.Error(err, "Failed to delete ReplicationSource for terminating PVC")
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	// Validate that the PSK secret exists
 	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName, pvcNamespace)
 	if err != nil || !secretExists {
@@ -805,6 +820,25 @@ func (v *VSHandler) removeFinalizerFromPVC(pvcName, pvcNamespace string) error {
 
 	l.Info("Removed finalizer from PVC", "finalizer", PVCFinalizerName)
 	return nil
+}
+
+// isPVCTerminating checks if a PVC is in Terminating status (has DeletionTimestamp set)
+func (v *VSHandler) isPVCTerminating(pvcName, pvcNamespace string) (bool, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			// PVC not found, consider it as not terminating
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	// A PVC is terminating if it has a DeletionTimestamp set
+	return !pvc.DeletionTimestamp.IsZero(), nil
 }
 
 // Made with Bob
