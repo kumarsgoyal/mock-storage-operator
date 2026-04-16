@@ -971,6 +971,102 @@ func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace stri
 	return nil
 }
 
+// HasTemporaryPVC checks if a temporary PVC exists for the given PVC name
+func (v *VSHandler) HasTemporaryPVC(pvcName, pvcNamespace string) (bool, error) {
+	tmpPVCName := pvcName + "-tmp"
+	tmpPVC := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      tmpPVCName,
+		Namespace: pvcNamespace,
+	}, tmpPVC)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check for temporary PVC: %w", err)
+	}
+	return true, nil
+}
+
+// RestorePVCFromTemporary creates a new PVC from the temporary PVC and updates PV claimRef
+// This is used when transitioning to secondary state
+func (v *VSHandler) RestorePVCFromTemporary(pvcName, pvcNamespace string) error {
+	l := v.log.WithValues("pvcName", pvcName, "namespace", pvcNamespace)
+
+	tmpPVCName := pvcName + "-tmp"
+
+	// Get the temporary PVC
+	tmpPVC := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      tmpPVCName,
+		Namespace: pvcNamespace,
+	}, tmpPVC)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			l.V(1).Info("Temporary PVC not found, nothing to restore")
+			return nil
+		}
+		return fmt.Errorf("failed to get temporary PVC: %w", err)
+	}
+
+	// Get the PV bound to the temporary PVC
+	pv, err := v.getPVFromPVC(tmpPVCName, pvcNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to get PV for temporary PVC: %w", err)
+	}
+
+	// Create the new PVC with the original name from the temporary PVC
+	newPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        pvcName,
+			Namespace:   pvcNamespace,
+			Annotations: tmpPVC.Annotations,
+			Labels:      tmpPVC.Labels,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      tmpPVC.Spec.AccessModes,
+			Resources:        tmpPVC.Spec.Resources,
+			StorageClassName: tmpPVC.Spec.StorageClassName,
+			VolumeMode:       tmpPVC.Spec.VolumeMode,
+			VolumeName:       pv.Name, // Bind to the same PV
+		},
+	}
+
+	// Create the new PVC
+	err = v.client.Create(v.ctx, newPVC)
+	if err != nil && !kerrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create restored PVC: %w", err)
+	}
+
+	l.Info("Created restored PVC from temporary PVC", "pvcName", pvcName, "tmpPVCName", tmpPVCName)
+
+	// Update PV claimRef to point to the new PVC
+	// Remove resourceVersion and UID from claimRef
+	pv.Spec.ClaimRef = &corev1.ObjectReference{
+		Kind:       "PersistentVolumeClaim",
+		Namespace:  pvcNamespace,
+		Name:       pvcName,
+		APIVersion: "v1",
+	}
+
+	err = v.client.Update(v.ctx, pv)
+	if err != nil {
+		return fmt.Errorf("failed to update PV claimRef to restored PVC: %w", err)
+	}
+
+	l.Info("Updated PV claimRef to point to restored PVC", "pvName", pv.Name, "pvcName", pvcName)
+
+	// Delete the temporary PVC
+	err = v.client.Delete(v.ctx, tmpPVC)
+	if err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete temporary PVC: %w", err)
+	}
+
+	l.Info("Deleted temporary PVC", "tmpPVCName", tmpPVCName)
+
+	return nil
+}
+
 // Made with Bob
 
 // ConvertSchedulingIntervalToCronSpec converts scheduling interval to cron spec

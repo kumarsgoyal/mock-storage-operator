@@ -283,6 +283,29 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	protectedPVCs := []corev1.LocalObjectReference{}
 	allReady := true
 
+	// Create VolSync handler for checking temporary PVCs
+	vsHandler := volsync.NewVSHandler(ctx, r.Client, logger, vgr, defaultSchedulingInterval)
+
+	// Check for temporary PVCs and restore them if VGR is in secondary state
+	// This handles the case where a PVC was deleted on primary and we need to restore it from temp
+	for _, pvc := range pvcList.Items {
+		// Check if a temporary PVC exists for this PVC
+		hasTempPVC, err := vsHandler.HasTemporaryPVC(pvc.Name, pvc.Namespace)
+		if err != nil {
+			logger.Error(err, "Failed to check for temporary PVC", "pvcName", pvc.Name)
+			return ctrl.Result{}, err
+		}
+
+		if hasTempPVC {
+			logger.Info("Found temporary PVC, restoring original PVC", "pvcName", pvc.Name)
+			if err := vsHandler.RestorePVCFromTemporary(pvc.Name, pvc.Namespace); err != nil {
+				logger.Error(err, "Failed to restore PVC from temporary", "pvcName", pvc.Name)
+				return ctrl.Result{}, err
+			}
+			logger.Info("Successfully restored PVC from temporary", "pvcName", pvc.Name)
+		}
+	}
+
 	for _, pvc := range pvcList.Items {
 		// Extract scheduling interval from annotation (default to 5m if not set)
 		schedulingInterval := "5m"
