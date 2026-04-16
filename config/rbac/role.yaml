@@ -28,6 +28,10 @@ rules:
   - apiGroups: [""]
     resources: [persistentvolumeclaims/finalizers]
     verbs: [update]
+  # PVs (read/write — we update claimRef for temporary PVCs)
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, update, patch]
   # Secrets (read/write — we auto-generate rsync-tls PSK secrets)
   - apiGroups: [""]
     resources: [secrets]

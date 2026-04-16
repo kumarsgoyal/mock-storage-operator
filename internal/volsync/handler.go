@@ -227,7 +227,7 @@ func (v *VSHandler) ensurePVCLabels(pvcName, pvcNamespace string) error {
 
 	// Check if labels and annotations need to be added
 	needsUpdate := false
-	
+
 	// Ensure labels map exists
 	if pvc.Labels == nil {
 		pvc.Labels = make(map[string]string)
@@ -310,18 +310,27 @@ func (v *VSHandler) ReconcileRS(
 ) (*volsyncv1alpha1.ReplicationSource, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
-	// Check if PVC is terminating - if so, delete the RS and return
+	// Check if PVC is terminating - if so, create temporary PVC and delete the RS
 	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
 	if err != nil {
 		l.Error(err, "Failed to check if PVC is terminating")
 		return nil, err
 	}
 	if isTerminating {
-		l.Info("PVC is terminating, deleting ReplicationSource")
+		l.Info("PVC is terminating, creating temporary PVC and deleting ReplicationSource")
+
+		// Create temporary PVC from terminating PVC
+		if err := v.createTemporaryPVCFromTerminating(pvcName, pvcNamespace); err != nil {
+			l.Error(err, "Failed to create temporary PVC for terminating PVC")
+			return nil, err
+		}
+
+		// Delete the RS
 		if err := v.DeleteRS(pvcName); err != nil {
 			l.Error(err, "Failed to delete ReplicationSource for terminating PVC")
 			return nil, err
 		}
+
 		return nil, nil
 	}
 
@@ -615,7 +624,7 @@ func (v *VSHandler) DeleteRDByLabel() error {
 // DeletePVCsByLabel deletes all PVCs with the volumegroupreplication-owner label
 func (v *VSHandler) DeletePVCsByLabel() error {
 	pvcList := &corev1.PersistentVolumeClaimList{}
-	
+
 	// List PVCs with the owner label
 	labelSelector := client.MatchingLabels{VRGOwnerLabel: v.owner.GetName()}
 	if err := v.client.List(v.ctx, pvcList, labelSelector); err != nil {
@@ -624,13 +633,13 @@ func (v *VSHandler) DeletePVCsByLabel() error {
 
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
-		
+
 		// Remove finalizer first to allow deletion
 		if err := v.removeFinalizerFromPVC(pvc.Name, pvc.Namespace); err != nil {
 			v.log.Error(err, "Failed to remove finalizer from PVC", "name", pvc.Name, "namespace", pvc.Namespace)
 			// Continue with deletion attempt even if finalizer removal fails
 		}
-		
+
 		v.log.Info("Deleting PVC", "name", pvc.Name, "namespace", pvc.Namespace)
 		if err := v.client.Delete(v.ctx, pvc); err != nil && !kerrors.IsNotFound(err) {
 			v.log.Error(err, "Failed to delete PVC", "name", pvc.Name, "namespace", pvc.Namespace)
@@ -646,7 +655,7 @@ func (v *VSHandler) DeletePVCsByLabel() error {
 // This is useful when transitioning from primary to secondary or vice versa
 func (v *VSHandler) RemoveFinalizersFromPVCsByLabel() error {
 	pvcList := &corev1.PersistentVolumeClaimList{}
-	
+
 	// List PVCs with the owner label
 	labelSelector := client.MatchingLabels{VRGOwnerLabel: v.owner.GetName()}
 	if err := v.client.List(v.ctx, pvcList, labelSelector); err != nil {
@@ -839,6 +848,127 @@ func (v *VSHandler) isPVCTerminating(pvcName, pvcNamespace string) (bool, error)
 
 	// A PVC is terminating if it has a DeletionTimestamp set
 	return !pvc.DeletionTimestamp.IsZero(), nil
+}
+
+// getPVFromPVC gets the PersistentVolume bound to a PVC
+func (v *VSHandler) getPVFromPVC(pvcName, pvcNamespace string) (*corev1.PersistentVolume, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	if pvc.Spec.VolumeName == "" {
+		return nil, fmt.Errorf("PVC %s/%s is not bound to a PV", pvcNamespace, pvcName)
+	}
+
+	pv := &corev1.PersistentVolume{}
+	err = v.client.Get(v.ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PV %s: %w", pvc.Spec.VolumeName, err)
+	}
+
+	return pv, nil
+}
+
+// createTemporaryPVCFromTerminating creates a temporary PVC from a terminating PVC
+// and updates the PV claimRef to point to the temporary PVC
+func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace string) error {
+	l := v.log.WithValues("pvcName", pvcName, "namespace", pvcNamespace)
+
+	// Get the terminating PVC
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		return fmt.Errorf("failed to get terminating PVC: %w", err)
+	}
+
+	// Get the PV bound to this PVC
+	pv, err := v.getPVFromPVC(pvcName, pvcNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to get PV for terminating PVC: %w", err)
+	}
+
+	// Create temporary PVC name
+	tmpPVCName := pvcName + "-tmp"
+
+	// Filter annotations - keep only those starting with "apps.open-cluster-management.io"
+	// and "volumereplicationgroups.ramendr.openshift.io/ramen-restore"
+	tmpAnnotations := make(map[string]string)
+	for key, value := range pvc.Annotations {
+		if key == "volumereplicationgroups.ramendr.openshift.io/ramen-restore" {
+			tmpAnnotations[key] = value
+		} else if len(key) >= 35 && key[:35] == "apps.open-cluster-management.io" {
+			tmpAnnotations[key] = value
+		}
+	}
+
+	// Filter labels - keep only "volumegroupreplication-owner" and "ramendr.openshift.io/consistency-group"
+	tmpLabels := make(map[string]string)
+	if val, ok := pvc.Labels[VRGOwnerLabel]; ok {
+		tmpLabels[VRGOwnerLabel] = val
+	}
+	if val, ok := pvc.Labels["ramendr.openshift.io/consistency-group"]; ok {
+		tmpLabels["ramendr.openshift.io/consistency-group"] = val
+	}
+
+	// Create the temporary PVC
+	tmpPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        tmpPVCName,
+			Namespace:   pvcNamespace,
+			Annotations: tmpAnnotations,
+			Labels:      tmpLabels,
+			Finalizers:  nil,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      pvc.Spec.AccessModes,
+			Resources:        pvc.Spec.Resources,
+			StorageClassName: pvc.Spec.StorageClassName,
+			VolumeMode:       pvc.Spec.VolumeMode,
+			VolumeName:       pv.Name, // Bind to the same PV
+		},
+	}
+
+	// Create the temporary PVC
+	err = v.client.Create(v.ctx, tmpPVC)
+	if err != nil && !kerrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create temporary PVC: %w", err)
+	}
+
+	l.Info("Created temporary PVC", "tmpPVCName", tmpPVCName)
+
+	// Update PV claimRef to point to the temporary PVC
+	// Remove resourceVersion and UID from claimRef
+	pv.Spec.ClaimRef = &corev1.ObjectReference{
+		Kind:       "PersistentVolumeClaim",
+		Namespace:  pvcNamespace,
+		Name:       tmpPVCName,
+		APIVersion: "v1",
+	}
+
+	err = v.client.Update(v.ctx, pv)
+	if err != nil {
+		return fmt.Errorf("failed to update PV claimRef: %w", err)
+	}
+
+	l.Info("Updated PV claimRef to point to temporary PVC", "pvName", pv.Name, "tmpPVCName", tmpPVCName)
+
+	// Remove finalizer from the original terminating PVC
+	err = v.removeFinalizerFromPVC(pvcName, pvcNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to remove finalizer from terminating PVC: %w", err)
+	}
+
+	l.Info("Removed finalizer from terminating PVC", "pvcName", pvcName)
+
+	return nil
 }
 
 // Made with Bob
