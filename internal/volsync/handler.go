@@ -23,6 +23,9 @@ const (
 	// VRGOwnerLabel is used to label VolSync resources with their owner
 	VRGOwnerLabel = "volumegroupreplication-owner"
 
+	// PVCFinalizerName is the finalizer added to PVCs protected by replication
+	PVCFinalizerName = "mock.storage.io/pvc-protection"
+
 	// SchedulingIntervalMinLength is the minimum length for scheduling interval
 	SchedulingIntervalMinLength = 2
 
@@ -106,6 +109,12 @@ func (v *VSHandler) ReconcileRD(
 	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
 	err = v.ensureDestinationPVC(pvcName, pvcNamespace, capacity, storageClassName, accessModes, consistencyGroup)
 	if err != nil {
+		return nil, err
+	}
+
+	// Add finalizer to PVC for protection
+	if err := v.addFinalizerToPVC(pvcName, pvcNamespace); err != nil {
+		l.Error(err, "Failed to add finalizer to PVC")
 		return nil, err
 	}
 
@@ -321,6 +330,12 @@ func (v *VSHandler) ReconcileRS(
 
 	replicationSource, err := v.createOrUpdateRS(pvcName, pvcNamespace, remoteAddress, pskSecretName, storageClassName, accessModes, volumeSnapshotClassName)
 	if err != nil {
+		return nil, err
+	}
+
+	// Add finalizer to PVC for protection
+	if err := v.addFinalizerToPVC(pvcName, pvcNamespace); err != nil {
+		l.Error(err, "Failed to add finalizer to PVC")
 		return nil, err
 	}
 
@@ -594,6 +609,13 @@ func (v *VSHandler) DeletePVCsByLabel() error {
 
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
+		
+		// Remove finalizer first to allow deletion
+		if err := v.removeFinalizerFromPVC(pvc.Name, pvc.Namespace); err != nil {
+			v.log.Error(err, "Failed to remove finalizer from PVC", "name", pvc.Name, "namespace", pvc.Namespace)
+			// Continue with deletion attempt even if finalizer removal fails
+		}
+		
 		v.log.Info("Deleting PVC", "name", pvc.Name, "namespace", pvc.Namespace)
 		if err := v.client.Delete(v.ctx, pvc); err != nil && !kerrors.IsNotFound(err) {
 			v.log.Error(err, "Failed to delete PVC", "name", pvc.Name, "namespace", pvc.Namespace)
@@ -602,6 +624,29 @@ func (v *VSHandler) DeletePVCsByLabel() error {
 	}
 
 	v.log.Info("Deleted PVCs", "count", len(pvcList.Items))
+	return nil
+}
+
+// RemoveFinalizersFromPVCsByLabel removes finalizers from all PVCs with the volumegroupreplication-owner label
+// This is useful when transitioning from primary to secondary or vice versa
+func (v *VSHandler) RemoveFinalizersFromPVCsByLabel() error {
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	
+	// List PVCs with the owner label
+	labelSelector := client.MatchingLabels{VRGOwnerLabel: v.owner.GetName()}
+	if err := v.client.List(v.ctx, pvcList, labelSelector); err != nil {
+		return fmt.Errorf("failed to list PVCs by label: %w", err)
+	}
+
+	for i := range pvcList.Items {
+		pvc := &pvcList.Items[i]
+		if err := v.removeFinalizerFromPVC(pvc.Name, pvc.Namespace); err != nil {
+			v.log.Error(err, "Failed to remove finalizer from PVC", "name", pvc.Name, "namespace", pvc.Namespace)
+			return fmt.Errorf("failed to remove finalizer from PVC %s/%s: %w", pvc.Namespace, pvc.Name, err)
+		}
+	}
+
+	v.log.Info("Removed finalizers from PVCs", "count", len(pvcList.Items))
 	return nil
 }
 
@@ -694,6 +739,72 @@ func getLocalServiceNameForRD(rdName string) string {
 func GetRemoteServiceNameForRDFromPVCName(pvcName, rdNamespace string) string {
 	rdName := getReplicationDestinationName(pvcName)
 	return fmt.Sprintf("%s.%s.svc.clusterset.local", getLocalServiceNameForRD(rdName), rdNamespace)
+}
+
+// addFinalizerToPVC adds the PVC protection finalizer to a PVC
+func (v *VSHandler) addFinalizerToPVC(pvcName, pvcNamespace string) error {
+	l := v.log.WithValues("pvcName", pvcName, "namespace", pvcNamespace)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			l.V(1).Info("PVC not found, cannot add finalizer")
+			return nil
+		}
+		return fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	// Check if finalizer already exists
+	if ctrlutil.ContainsFinalizer(pvc, PVCFinalizerName) {
+		l.V(1).Info("PVC already has finalizer")
+		return nil
+	}
+
+	// Add finalizer
+	ctrlutil.AddFinalizer(pvc, PVCFinalizerName)
+	if err := v.client.Update(v.ctx, pvc); err != nil {
+		return fmt.Errorf("failed to add finalizer to PVC: %w", err)
+	}
+
+	l.Info("Added finalizer to PVC", "finalizer", PVCFinalizerName)
+	return nil
+}
+
+// removeFinalizerFromPVC removes the PVC protection finalizer from a PVC
+func (v *VSHandler) removeFinalizerFromPVC(pvcName, pvcNamespace string) error {
+	l := v.log.WithValues("pvcName", pvcName, "namespace", pvcNamespace)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			l.V(1).Info("PVC not found, cannot remove finalizer")
+			return nil
+		}
+		return fmt.Errorf("failed to get PVC: %w", err)
+	}
+
+	// Check if finalizer exists
+	if !ctrlutil.ContainsFinalizer(pvc, PVCFinalizerName) {
+		l.V(1).Info("PVC does not have finalizer")
+		return nil
+	}
+
+	// Remove finalizer
+	ctrlutil.RemoveFinalizer(pvc, PVCFinalizerName)
+	if err := v.client.Update(v.ctx, pvc); err != nil {
+		return fmt.Errorf("failed to remove finalizer from PVC: %w", err)
+	}
+
+	l.Info("Removed finalizer from PVC", "finalizer", PVCFinalizerName)
+	return nil
 }
 
 // Made with Bob
