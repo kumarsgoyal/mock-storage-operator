@@ -26,6 +26,9 @@ const (
 	// PVCFinalizerName is the finalizer added to PVCs protected by replication
 	PVCFinalizerName = "mock.storage.io/pvc-protection"
 
+	// TemporaryPVCAnnotation marks a temporary PVC as non-reconcilable and restore-only
+	TemporaryPVCAnnotation = "volumegroupreplication.ramendr.openshift.io/temporary-pvc"
+
 	// SchedulingIntervalMinLength is the minimum length for scheduling interval
 	SchedulingIntervalMinLength = 2
 
@@ -86,6 +89,20 @@ func (v *VSHandler) ReconcileRD(
 	consistencyGroup string,
 ) (*volsyncv1alpha1.ReplicationDestination, error) {
 	l := v.log.WithValues("pvcName", pvcName)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, pvc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PVC for ReplicationDestination reconcile: %w", err)
+	}
+
+	if _, isTemporaryPVC := pvc.Annotations[TemporaryPVCAnnotation]; isTemporaryPVC {
+		l.Info("Skipping ReplicationDestination reconcile for temporary PVC")
+		return nil, nil
+	}
 
 	// Validate that the PSK secret exists
 	secretExists, err := v.validateSecretAndAddOwnerRef(pskSecretName, pvcNamespace)
@@ -908,6 +925,7 @@ func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace stri
 			tmpAnnotations[key] = value
 		}
 	}
+	tmpAnnotations[TemporaryPVCAnnotation] = "not reconcilable; used only to hold the main PVC info for restore"
 
 	// Filter labels - keep only "volumegroupreplication-owner" and "ramendr.openshift.io/consistency-group"
 	tmpLabels := make(map[string]string)
@@ -925,7 +943,6 @@ func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace stri
 			Namespace:   pvcNamespace,
 			Annotations: tmpAnnotations,
 			Labels:      tmpLabels,
-			Finalizers:  nil,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes:      pvc.Spec.AccessModes,
@@ -1015,12 +1032,43 @@ func (v *VSHandler) RestorePVCFromTemporary(pvcName, pvcNamespace string) error 
 		return fmt.Errorf("failed to get PV for temporary PVC: %w", err)
 	}
 
+	// If the main PVC still exists and is terminating, remove its finalizers and return.
+	// Wait for deletion to complete before attempting to recreate it.
+	existingPVC := &corev1.PersistentVolumeClaim{}
+	err = v.client.Get(v.ctx, types.NamespacedName{
+		Name:      pvcName,
+		Namespace: pvcNamespace,
+	}, existingPVC)
+	if err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check existing PVC before restore: %w", err)
+	}
+	if err == nil && existingPVC.DeletionTimestamp != nil {
+		if len(existingPVC.Finalizers) > 0 {
+			existingPVC.Finalizers = nil
+			if err := v.client.Update(v.ctx, existingPVC); err != nil {
+				return fmt.Errorf("failed to remove finalizers from terminating PVC: %w", err)
+			}
+			l.Info("Removed finalizers from terminating PVC before restore", "pvcName", pvcName)
+		}
+
+		l.Info("Main PVC is still terminating, skipping restore create until deletion completes", "pvcName", pvcName)
+		return nil
+	}
+
 	// Create the new PVC with the original name from the temporary PVC
+	restoreAnnotations := make(map[string]string)
+	for key, value := range tmpPVC.Annotations {
+		if key == TemporaryPVCAnnotation {
+			continue
+		}
+		restoreAnnotations[key] = value
+	}
+
 	newPVC := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        pvcName,
 			Namespace:   pvcNamespace,
-			Annotations: tmpPVC.Annotations,
+			Annotations: restoreAnnotations,
 			Labels:      tmpPVC.Labels,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
