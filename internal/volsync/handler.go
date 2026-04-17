@@ -328,6 +328,11 @@ func (v *VSHandler) ReconcileRS(
 ) (*volsyncv1alpha1.ReplicationSource, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
+	if strings.HasSuffix(pvcName, "-tmp") {
+		l.Info("Skipping ReplicationSource reconcile for temporary PVC")
+		return nil, nil
+	}
+
 	// Check if PVC is terminating - if so, create temporary PVC and delete the RS
 	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
 	if err != nil {
