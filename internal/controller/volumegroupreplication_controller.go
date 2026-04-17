@@ -131,11 +131,8 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 
 	// Get default configuration from VGRClass
 	defaultSchedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
-	if defaultSchedulingInterval == "" {
-		defaultSchedulingInterval = vgrClass.Spec.Parameters["schedule"]
-		if defaultSchedulingInterval == "" {
-			defaultSchedulingInterval = "5m" // Default to 5 minutes
-		}
+	if defaultSchedulingInterval == "" || defaultSchedulingInterval == "0m" {
+		defaultSchedulingInterval = "5m" // Default to 5 minutes
 	}
 
 	defaultStorageClassName := vgrClass.Spec.Parameters["storageClassName"]
@@ -257,9 +254,9 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	defaultSchedulingInterval := vgrClass.Spec.Parameters["schedulingInterval"]
 	if defaultSchedulingInterval == "" {
 		defaultSchedulingInterval = vgrClass.Spec.Parameters["schedule"]
-		if defaultSchedulingInterval == "" {
-			defaultSchedulingInterval = "5m" // Default to 5 minutes
-		}
+	}
+	if defaultSchedulingInterval == "" || defaultSchedulingInterval == "0m" {
+		defaultSchedulingInterval = "5m" // Default to 5 minutes
 	}
 
 	defaultStorageClassName := vgrClass.Spec.Parameters["storageClassName"]
@@ -409,10 +406,20 @@ func (r *VolumeGroupReplicationReconciler) reconcileDelete(
 		return ctrl.Result{}, err
 	}
 
-	// Delete all PVCs with the volumegroupreplication-owner label
-	if err := vsHandler.DeletePVCsByLabel(); err != nil {
-		logger.Error(err, "Failed to delete PVCs by label")
-		return ctrl.Result{}, err
+	// Delete PVCs only for secondary VGRs.
+	// For primary, allow Ramen to handle PVC lifecycle after removing our PVC finalizers.
+	if vgr.Spec.ReplicationState == volrep.Secondary {
+		if err := vsHandler.DeletePVCsByLabel(); err != nil {
+			logger.Error(err, "Failed to delete PVCs by label")
+			return ctrl.Result{}, err
+		}
+	} else {
+		logger.Info("Skipping PVC deletion during VGR delete because replication state is not secondary; removing PVC finalizers instead",
+			"replicationState", vgr.Spec.ReplicationState)
+		if err := vsHandler.RemoveFinalizersFromPVCsByLabel(); err != nil {
+			logger.Error(err, "Failed to remove PVC finalizers by label")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Remove finalizer after cleanup

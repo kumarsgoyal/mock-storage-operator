@@ -657,6 +657,24 @@ func (v *VSHandler) DeletePVCsByLabel() error {
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
 
+		if pvc.Spec.VolumeName != "" {
+			pv := &corev1.PersistentVolume{}
+			err := v.client.Get(v.ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv)
+			if err != nil && !kerrors.IsNotFound(err) {
+				v.log.Error(err, "Failed to get PV for PVC", "pvName", pvc.Spec.VolumeName, "pvcName", pvc.Name, "namespace", pvc.Namespace)
+				return fmt.Errorf("failed to get PV %s for PVC %s/%s: %w", pvc.Spec.VolumeName, pvc.Namespace, pvc.Name, err)
+			}
+
+			if err == nil && pv.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimRetain {
+				pv.Spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimDelete
+				if err := v.client.Update(v.ctx, pv); err != nil {
+					v.log.Error(err, "Failed to update PV reclaim policy", "pvName", pv.Name, "pvcName", pvc.Name, "namespace", pvc.Namespace)
+					return fmt.Errorf("failed to update PV %s reclaim policy for PVC %s/%s: %w", pv.Name, pvc.Namespace, pvc.Name, err)
+				}
+				v.log.Info("Updated PV reclaim policy from Retain to Delete", "pvName", pv.Name, "pvcName", pvc.Name, "namespace", pvc.Namespace)
+			}
+		}
+
 		// Remove finalizer first to allow deletion
 		if err := v.removeFinalizerFromPVC(pvc.Name, pvc.Namespace); err != nil {
 			v.log.Error(err, "Failed to remove finalizer from PVC", "name", pvc.Name, "namespace", pvc.Namespace)
@@ -741,12 +759,12 @@ func (v *VSHandler) addOwnerReference(obj, owner metav1.Object) (bool, error) {
 
 // getScheduleCronSpec returns the schedule in cron format
 func (v *VSHandler) getScheduleCronSpec() (*string, error) {
-	if v.schedulingInterval != "" {
+	if v.schedulingInterval != "" && v.schedulingInterval != "0m" {
 		return ConvertSchedulingIntervalToCronSpec(v.schedulingInterval)
 	}
 
 	// Use default value if not specified
-	v.log.Info("Warning - scheduling interval is empty, using default Schedule for volsync",
+	v.log.Info("Warning - scheduling interval is empty/0, using default Schedule for volsync",
 		"DefaultScheduleCronSpec", DefaultScheduleCronSpec)
 
 	return &DefaultScheduleCronSpec, nil
@@ -927,7 +945,7 @@ func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace stri
 	for key, value := range pvc.Annotations {
 		if key == "volumereplicationgroups.ramendr.openshift.io/ramen-restore" {
 			tmpAnnotations[key] = value
-		} else if len(key) >= 35 && key[:35] == "apps.open-cluster-management.io" {
+		} else if strings.HasPrefix(key, "apps.open-cluster-management.io") {
 			tmpAnnotations[key] = value
 		}
 	}
@@ -1074,7 +1092,7 @@ func (v *VSHandler) RestorePVCFromTemporary(pvcName, pvcNamespace string) error 
 	// Create the new PVC with the original name from the temporary PVC
 	restoreAnnotations := make(map[string]string)
 	for key, value := range tmpPVC.Annotations {
-		if key == TemporaryPVCAnnotation {
+		if key == TemporaryPVCAnnotation || key == "pv.kubernetes.io/bind-completed" {
 			continue
 		}
 		restoreAnnotations[key] = value
