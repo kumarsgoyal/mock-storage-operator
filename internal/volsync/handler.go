@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	volsyncv1alpha1 "github.com/backube/volsync/api/v1alpha1"
 	"github.com/go-logr/logr"
@@ -990,6 +991,10 @@ func (v *VSHandler) createTemporaryPVCFromTerminating(pvcName, pvcNamespace stri
 
 // HasTemporaryPVC checks if a temporary PVC exists for the given PVC name
 func (v *VSHandler) HasTemporaryPVC(pvcName, pvcNamespace string) (bool, error) {
+	if strings.HasSuffix(pvcName, "-tmp") {
+		return true, nil
+	}
+
 	tmpPVCName := pvcName + "-tmp"
 	tmpPVC := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
@@ -1010,7 +1015,13 @@ func (v *VSHandler) HasTemporaryPVC(pvcName, pvcNamespace string) (bool, error) 
 func (v *VSHandler) RestorePVCFromTemporary(pvcName, pvcNamespace string) error {
 	l := v.log.WithValues("pvcName", pvcName, "namespace", pvcNamespace)
 
+	l.V(1).Info("Temporary PVC restore...")
+
 	tmpPVCName := pvcName + "-tmp"
+	if strings.HasSuffix(pvcName, "-tmp") {
+		tmpPVCName = pvcName
+		pvcName = strings.TrimSuffix(tmpPVCName, "-tmp")
+	}
 
 	// Get the temporary PVC
 	tmpPVC := &corev1.PersistentVolumeClaim{}
@@ -1108,6 +1119,11 @@ func (v *VSHandler) RestorePVCFromTemporary(pvcName, pvcNamespace string) error 
 	err = v.client.Delete(v.ctx, tmpPVC)
 	if err != nil && !kerrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete temporary PVC: %w", err)
+	}
+
+	err = v.removeFinalizerFromPVC(tmpPVC.Name, tmpPVC.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to remove finalizer from terminating PVC: %w", err)
 	}
 
 	l.Info("Deleted temporary PVC", "tmpPVCName", tmpPVCName)
