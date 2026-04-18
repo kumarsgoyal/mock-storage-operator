@@ -90,10 +90,6 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return r.reconcilePrimary(ctx, logger, vgr, vgrClass)
 	case volrep.Secondary:
 		return r.reconcileSecondary(ctx, logger, vgr, vgrClass)
-	case volrep.Resync:
-		// For resync, we don't do anything special in this mock
-		logger.Info("Resync requested but not implemented in mock")
-		return ctrl.Result{RequeueAfter: requeueInterval}, nil
 	default:
 		logger.Error(fmt.Errorf("unknown replication state %q", vgr.Spec.ReplicationState),
 			"spec.replicationState must be primary, secondary, or resync")
@@ -170,6 +166,8 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 		if vscName := vgrClass.Spec.Parameters["volumeSnapshotClassName"]; vscName != "" {
 			volumeSnapshotClassName = &vscName
 		}
+
+		logger.V(1).Info("Protecting SRC PVC", "pvc.metadata", pvc.ObjectMeta)
 
 		// Use VolSync handler to reconcile ReplicationSource (like Ramen's ReconcileRS)
 		rs, err := vsHandler.ReconcileRS(
@@ -293,6 +291,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 			return ctrl.Result{}, err
 		}
 
+		logger.Info("Checking if a temporary PVC exists for this PVC", "pvcName", pvc.Name)
 		if hasTempPVC {
 			logger.Info("Found temporary PVC, restoring original PVC", "pvcName", pvc.Name)
 			if err := vsHandler.RestorePVCFromTemporary(pvc.Name, pvc.Namespace); err != nil {
@@ -324,6 +323,8 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 		if pvc.Spec.StorageClassName != nil {
 			storageClassName = *pvc.Spec.StorageClassName
 		}
+
+		logger.V(1).Info("Protecting DST PVC", "pvc.metadata", pvc.ObjectMeta)
 
 		// Use VolSync handler to reconcile ReplicationDestination
 		rd, err := vsHandler.ReconcileRD(

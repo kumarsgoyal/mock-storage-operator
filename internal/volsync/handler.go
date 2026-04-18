@@ -91,6 +91,11 @@ func (v *VSHandler) ReconcileRD(
 ) (*volsyncv1alpha1.ReplicationDestination, error) {
 	l := v.log.WithValues("pvcName", pvcName)
 
+	if strings.HasSuffix(pvcName, "-tmp") {
+		l.Info("Skipping ReplicationDestination reconcile for temporary PVC by name")
+		return nil, nil
+	}
+
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := v.client.Get(v.ctx, types.NamespacedName{
 		Name:      pvcName,
@@ -125,10 +130,10 @@ func (v *VSHandler) ReconcileRD(
 	}
 
 	// Now create destination PVC (like Ramen's EnsurePVCforDirectCopy)
-	err = v.ensureDestinationPVC(pvcName, pvcNamespace, capacity, storageClassName, accessModes, consistencyGroup)
-	if err != nil {
-		return nil, err
-	}
+	// err = v.ensureDestinationPVC(pvcName, pvcNamespace, capacity, storageClassName, accessModes, consistencyGroup)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// Add finalizer to PVC for protection
 	if err := v.addFinalizerToPVC(pvcName, pvcNamespace); err != nil {
@@ -336,7 +341,7 @@ func (v *VSHandler) ReconcileRS(
 	// Check if PVC is terminating - if so, create temporary PVC and delete the RS
 	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
 	if err != nil {
-		l.Error(err, "Failed to check if PVC is terminating")
+		l.Error(err, "Failed to checkgit  if PVC is terminating")
 		return nil, err
 	}
 	if isTerminating {

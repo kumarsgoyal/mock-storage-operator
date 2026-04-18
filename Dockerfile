@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 golang:1.25 AS builder
+FROM --platform=$TARGETPLATFORM golang:1.25 AS builder
 WORKDIR /workspace
 
 # Copy go mod files and download dependencies (cached layer)
@@ -9,10 +9,11 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-# Build for AMD64
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o manager ./cmd/main.go
+# Build for the requested target platform
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o manager ./cmd/main.go
 
-FROM --platform=linux/amd64 gcr.io/distroless/static:nonroot
+FROM --platform=$TARGETPLATFORM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
