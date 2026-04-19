@@ -303,6 +303,19 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	}
 
 	for _, pvc := range pvcList.Items {
+		if pvc.Status.Phase == corev1.ClaimLost {
+			if pvc.Annotations != nil {
+				if _, exists := pvc.Annotations["pv.kubernetes.io/bind-completed"]; exists {
+					delete(pvc.Annotations, "pv.kubernetes.io/bind-completed")
+					if err := r.Client.Update(ctx, &pvc); err != nil {
+						return ctrl.Result{}, fmt.Errorf("failed to update lost PVC after removing bind-completed annotation: %w", err)
+					}
+					logger.Info("Removed bind-completed annotation from lost PVC; waiting for next reconcile")
+				}
+			}
+
+			return ctrl.Result{}, fmt.Errorf("PVC in lost phase. Remove annotation. Reconcile again")
+		}
 		// Extract scheduling interval from annotation (default to 5m if not set)
 		schedulingInterval := "5m"
 		if interval, ok := pvc.Annotations["replication.storage.openshift.io/scheduling-interval"]; ok && interval != "" {
