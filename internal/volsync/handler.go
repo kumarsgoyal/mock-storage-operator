@@ -96,8 +96,32 @@ func (v *VSHandler) ReconcileRD(
 		return nil, nil
 	}
 
+	// Check if PVC is terminating - if so, create temporary PVC and delete the RS
+	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
+	if err != nil {
+		l.Error(err, "Failed to check if PVC is terminating")
+		return nil, err
+	}
+	if isTerminating {
+		l.Info("PVC is terminating, creating temporary PVC and deleting ReplicationSource")
+
+		// Create temporary PVC from terminating PVC
+		if err := v.createTemporaryPVCFromTerminating(pvcName, pvcNamespace); err != nil {
+			l.Error(err, "Failed to create temporary PVC for terminating PVC")
+			return nil, err
+		}
+
+		// Delete the RS
+		if err := v.DeleteRS(pvcName); err != nil {
+			l.Error(err, "Failed to delete ReplicationSource for terminating PVC")
+			return nil, err
+		}
+
+		return nil, nil
+	}
+
 	pvc := &corev1.PersistentVolumeClaim{}
-	err := v.client.Get(v.ctx, types.NamespacedName{
+	err = v.client.Get(v.ctx, types.NamespacedName{
 		Name:      pvcName,
 		Namespace: pvcNamespace,
 	}, pvc)
@@ -341,7 +365,7 @@ func (v *VSHandler) ReconcileRS(
 	// Check if PVC is terminating - if so, create temporary PVC and delete the RS
 	isTerminating, err := v.isPVCTerminating(pvcName, pvcNamespace)
 	if err != nil {
-		l.Error(err, "Failed to checkgit  if PVC is terminating")
+		l.Error(err, "Failed to check if PVC is terminating")
 		return nil, err
 	}
 	if isTerminating {

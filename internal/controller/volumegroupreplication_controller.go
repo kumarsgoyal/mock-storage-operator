@@ -221,7 +221,8 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	vgrClass *volrep.VolumeGroupReplicationClass,
 ) (ctrl.Result, error) {
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
-	logger.V(1).Info("Reconciling as secondary")
+	
+	logger.V(1).Info("Reconciling VolumeGroupReplication as secondary")
 
 	// Get PVCs based on selector (same as primary)
 	if vgr.Spec.Source.Selector == nil {
