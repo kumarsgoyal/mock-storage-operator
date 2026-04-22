@@ -255,7 +255,24 @@ kubectl apply -f app-pvc.yaml --context primary
 > [!NOTE]
 > The `ramendr.openshift.io/consistency-group` label is critical - it groups PVCs for replication and will be propagated to the secondary cluster.
 
-### Step 5: Deploy Primary VGR
+### Step 5: Enable DR Protection (When Using Ramen)
+
+When using Ramen for disaster recovery management, you need to enable DR protection for your application. This is typically done through the ODF UI or by applying a DRPlacementControl resource.
+
+**Enable DR Protection:**
+
+Once DR is enabled for your application:
+- Ramen will automatically create the VolumeGroupReplication (VGR) resources on both primary cluster
+- The VGR will use the consistency group label to identify which PVCs to protect
+- ReplicationSources will be created on the primary cluster
+- In order for the ReplicationDestination to be created on the secondary cluster, you will need to run the migration script (describe in the next step)
+- ReplicationDestinations will be created on the secondary cluster
+
+> [!NOTE]
+> If you are **not** using Ramen, you will need to manually create the VGR resources as shown in the following steps. When using Ramen, skip to Step 7 (Migration Script) after enabling DR protection.
+
+
+### Step 6: Deploy Primary VGR (Manual - Without Ramen)
 
 Deploy the VGR on the **primary cluster**. This creates ReplicationSources that connect to the secondary.
 
@@ -284,7 +301,7 @@ Apply on primary cluster:
 kubectl apply -f primary-vgr.yaml --context primary
 ```
 
-### Step 6: Verify Primary VGR Status
+### Step 7: Verify Primary VGR Status
 
 **Monitor replication:**
 ```bash
@@ -298,7 +315,7 @@ kubectl get replicationsources -n myapp --context primary
 kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastSyncTime}'
 ```
 
-### Step 7: Migrate PVC/PV Resources (Optional - For DR Scenarios)
+### Step 8: Migrate PVC/PV Resources (Required for Mock Operator)
 
 For the mock operator to protect workloads, a migration script must be run from the source cluster (Primary) where the application is running.
 
@@ -480,7 +497,7 @@ kubectl get vgr -n ramen-system --context secondary
 kubectl get pvc -A --context secondary -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.volumereplicationgroups\.ramendr\.openshift\.io/ramen-restore}{"\n"}{end}'
 ```
 
-### Step 8: Monitor Secondary VGR
+### Step 9: Monitor Secondary VGR
 
 The secondary VGR created by the migration script will:
 1. Use the label selector to find matching PVCs
