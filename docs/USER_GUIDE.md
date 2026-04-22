@@ -146,8 +146,8 @@ kubectl create secret generic volsync-rsync-tls-secret \
 ```
 
 > [!IMPORTANT]
-> **The PSK must be identical on both clusters for the same VGR.**
-Once the secret is created, you have to copy it to the secondary cluster.
+> **The PSK secret must be created in both clusters and in every namespace where you want to protect workloads.**
+> The secret must be identical across all clusters for replication to work. Create the same secret in each namespace that contains PVCs you want to replicate.
 
 ### Step 3: Create VolumeGroupReplicationClass
 
