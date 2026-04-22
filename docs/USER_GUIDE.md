@@ -300,7 +300,7 @@ kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status.lastS
 
 ### Step 7: Migrate PVC/PV Resources (Optional - For DR Scenarios)
 
-For Disaster Recovery scenarios where data already exists on the storage backend (e.g., CephFS) and you need to re-establish Kubernetes resource definitions on the secondary cluster, use this migration script.
+For the mock operator to protect workloads, a migration script must be run from the source cluster (Primary) where the application is running.
 
 **What it does:**
 - Migrates PersistentVolumeClaims (PVCs) and PersistentVolumes (PVs) from primary to secondary cluster
