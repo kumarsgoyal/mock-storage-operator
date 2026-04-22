@@ -439,8 +439,10 @@ chmod +x migrate-pvc-pv.sh
   vgrc-1
 ```
 
-> [!NOTE]
-> This migration script:
+> [!IMPORTANT]
+> **This migration script must be run ONLY ONCE after deploying your application(s) and it should be run from the primary cluster.**
+>
+> Running it multiple times may cause conflicts or unexpected behavior. The script:
 > - Migrates PVCs and PVs from primary to secondary cluster
 > - Preserves ACM (Advanced Cluster Management) annotations on PVCs
 > - Isolates only the consistency group label on both PVs and PVCs
