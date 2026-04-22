@@ -204,7 +204,7 @@ func (v *VRGInstance) reconcilePrimary() (ctrl.Result, error) {
 			volumeSnapshotClassName,
 		)
 		if err != nil {
-			
+
 			return ctrl.Result{}, err
 		}
 
@@ -593,7 +593,8 @@ func setCondition(conditions *[]metav1.Condition, condType string, status bool, 
 	})
 }
 
-func (r *VolumeGroupReplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *VolumeGroupReplicationReconciler) SetupWithManager(mgr ctrl.Manager, log logr.Logger) error {
+	r.log = log
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&volrep.VolumeGroupReplication{}).
 		Complete(r)
