@@ -5,10 +5,10 @@ A Kubernetes operator that acts as a **mock storage vendor** implementing the Vo
 ## 📚 Documentation
 
 - **[Deployment Steps](docs/DEPLOYMENT_STEPS.md)** - Step-by-step deployment guide from prerequisites to testing
-- **[VGR Creation Guide](docs/VGR_CREATION_GUIDE.md)** - Detailed guide for creating VGR resources with ConfigMap
+- **[VGR Creation Guide](docs/VGR_CREATION_GUIDE.md)** - Detailed guide for creating VGR resources
 - **[User Guide](docs/USER_GUIDE.md)** - Complete guide with installation, configuration, and troubleshooting
 - **[VGR Quick Reference](docs/VGR_QUICK_REFERENCE.md)** - Quick reference for creating VolumeGroupReplication resources
-- **[Examples](examples/)** - YAML examples for ConfigMap, VGRClass and VGR resources
+- **[Examples](examples/)** - YAML examples for VGRClass and VGR resources
 
 ## Purpose
 
@@ -182,8 +182,7 @@ kubectl apply -f examples/volumegroupreplicationclass.yaml
 
 This class specifies:
 - `provisioner: mock.storage.io` - tells the operator to handle VGRs using this class
-- Storage parameters (capacity, storageClassName, schedule, etc.)
-- Remote destination addresses (filled in after secondary setup)
+- Default parameters (capacity, storageClassName, schedule, pskSecretName, etc.)
 
 ### 2. Deploy on Secondary Cluster
 
@@ -206,7 +205,7 @@ You'll see log messages like:
 ReplicationDestination ready pvc=mysql-data address=192.168.1.100 keySecret=volsync-rsync-tls-dst-mockdr-mysql-data
 ```
 
-### 3. Copy Secrets and Update VGRClass
+### 3. Copy Secrets to Primary
 
 Copy the rsync-tls key secrets from secondary to primary:
 ```bash
@@ -214,24 +213,7 @@ kubectl get secret volsync-rsync-tls-dst-mockdr-mysql-data -n myapp --context se
   | kubectl apply --context primary -f -
 ```
 
-Update the VolumeGroupReplicationClass with the remote addresses:
-```yaml
-apiVersion: replication.storage.io/v1alpha1
-kind: VolumeGroupReplicationClass
-metadata:
-  name: mock-vgr-class
-spec:
-  provisioner: mock.storage.io
-  parameters:
-    schedule: "*/5 * * * *"
-    capacity: "10Gi"
-    storageClassName: "standard"
-    serviceType: "LoadBalancer"
-    pvc-mysql-data: "true"
-    # Add these after secondary is ready:
-    mock.storage.io/remote-address-mysql-data: "192.168.1.100"
-    mock.storage.io/remote-key-secret-mysql-data: "volsync-rsync-tls-dst-mockdr-mysql-data"
-```
+The operator automatically discovers ReplicationDestination addresses using Submariner's clusterset.local DNS.
 
 ### 4. Deploy on Primary Cluster
 
@@ -319,11 +301,11 @@ VolumeGroupReplicationClass
   ├── Spec
   │   ├── provisioner: mock.storage.io
   │   └── parameters:
-  │       ├── schedule: "*/5 * * * *"
+  │       ├── schedulingInterval: "5m" (or cron format)
   │       ├── capacity: "10Gi"
   │       ├── storageClassName: "standard"
-  │       ├── mock.storage.io/remote-address-<pvc>: <address>
-  │       └── mock.storage.io/remote-key-secret-<pvc>: <secret>
+  │       ├── pskSecretName: "volsync-rsync-tls-secret"
+  │       └── volumeSnapshotClassName: "csi-snapclass" (optional)
   │
   └── (Used by operator to configure VolSync resources)
 ```

@@ -1,6 +1,6 @@
 # Mock Storage Operator - Complete Deployment Steps
 
-This document provides step-by-step instructions for deploying the Mock Storage Operator and setting up VolumeGroupReplication for disaster recovery testing using ConfigMap-based PVC configuration.
+This document provides step-by-step instructions for deploying the Mock Storage Operator and setting up VolumeGroupReplication for disaster recovery testing.
 
 ## Table of Contents
 1. [Environment Setup](#environment-setup)
@@ -291,52 +291,7 @@ mysql-data      Bound    pvc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   10Gi       R
 postgres-data   Bound    pvc-yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy   5Gi        RWO            standard       1m    app=myapp
 ```
 
-### Step 8: Create PVC ConfigMap on Secondary
-
-**IMPORTANT**: This ConfigMap must be created on the **secondary cluster** and should match the PVCs from the primary cluster.
-
-Create the ConfigMap based on your primary cluster PVCs:
-
-```bash
-cat <<EOF | kubectl apply -f - --context secondary
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
-  namespace: myapp
-data:
-  # Format: "pvc=<pvc-name>/<namespace>": "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
-  
-  # MySQL data - sync every 5 minutes
-  "pvc=mysql-data/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  
-  # PostgreSQL data - sync every 10 minutes
-  "pvc=postgres-data/myapp": "schedulingInterval=10m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-EOF
-```
-
-**ConfigMap Format Explained:**
-
-- **Key**: `pvc=<pvc-name>/<namespace>`
-  - `pvc-name`: Name of the PVC on primary cluster
-  - `namespace`: Namespace where the PVC exists (must match VGR namespace)
-
-- **Value**: `schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>`
-  - `schedulingInterval`: How often to sync (e.g., `3m`, `5m`, `1h`, or cron format `*/5 * * * *`)
-  - `storageClassName`: Storage class to use for ReplicationDestination PVC
-  - `volumeSnapshotClassName`: Volume snapshot class for snapshots
-
-**Verify ConfigMap:**
-
-```bash
-# Check ConfigMap
-kubectl get configmap pvc-config -n myapp --context secondary
-
-# View ConfigMap content
-kubectl get configmap pvc-config -n myapp --context secondary -o yaml
-```
-
-### Step 9: Create VolumeGroupReplicationClass
+### Step 8: Create VolumeGroupReplicationClass
 
 Create VGRClass on **both clusters**:
 
@@ -355,14 +310,20 @@ metadata:
 spec:
   provisioner: mock.storage.io
   parameters:
+    # Default scheduling interval (can be overridden per-PVC via annotations)
+    schedulingInterval: "5m"
+    
     # Default capacity for ReplicationDestinations
     capacity: "10Gi"
     
-    # PSK secret name (optional, defaults to volsync-rsync-tls-<vgr-name>)
+    # Default storage class
+    storageClassName: "standard"
+    
+    # PSK secret name
     pskSecretName: "volsync-rsync-tls-secret"
     
-    # ConfigMap name containing PVC configurations (required for secondary)
-    pvcConfigMap: "pvc-config"
+    # Volume snapshot class (optional)
+    volumeSnapshotClassName: "csi-snapclass"
 EOF
 
 # Apply the same VGRClass on secondary
@@ -380,9 +341,11 @@ metadata:
 spec:
   provisioner: mock.storage.io
   parameters:
+    schedulingInterval: "5m"
     capacity: "10Gi"
+    storageClassName: "standard"
     pskSecretName: "volsync-rsync-tls-secret"
-    pvcConfigMap: "pvc-config"
+    volumeSnapshotClassName: "csi-snapclass"
 EOF
 ```
 
@@ -400,7 +363,7 @@ kubectl get volumegroupreplicationclass mock-vgr-class --context secondary
 
 ## Testing Replication
 
-### Step 10: Deploy Secondary VGR
+### Step 9: Deploy Secondary VGR
 
 Deploy VGR on **secondary cluster first**:
 
@@ -446,16 +409,16 @@ kubectl wait --for=condition=Ready vgr/myapp-vgr -n myapp --context secondary --
 
 **Expected log output:**
 ```
-Found PVC configurations count=2 configMap=pvc-config
+Found PVCs matching selector count=2
 ReplicationDestination created for PVC mysql-data
 ReplicationDestination created for PVC postgres-data
-ReplicationDestination ready pvc=mysql-data address=mysql-data-rd.myapp.svc.clusterset.local
-ReplicationDestination ready pvc=postgres-data address=postgres-data-rd.myapp.svc.clusterset.local
+ReplicationDestination ready pvc=mysql-data address=mysql-data.myapp.svc.clusterset.local
+ReplicationDestination ready pvc=postgres-data address=postgres-data.myapp.svc.clusterset.local
 ServiceExport created for ReplicationDestination mysql-data
 ServiceExport created for ReplicationDestination postgres-data
 ```
 
-### Step 11: Deploy Primary VGR
+### Step 10: Deploy Primary VGR
 
 Deploy VGR on **primary cluster**:
 
@@ -512,7 +475,7 @@ Sync completed successfully for postgres-data
 
 ## Verification
 
-### Step 12: Verify Replication Status
+### Step 11: Verify Replication Status
 
 **Check VGR status on both clusters:**
 
@@ -539,7 +502,7 @@ status:
     - name: postgres-data
 ```
 
-### Step 13: Verify VolSync Resources
+### Step 12: Verify VolSync Resources
 
 **On primary cluster:**
 
@@ -561,7 +524,7 @@ kubectl get replicationdestinations -n myapp --context secondary
 kubectl get replicationdestination <name> -n myapp --context secondary -o yaml
 ```
 
-### Step 14: Monitor Sync Progress
+### Step 13: Monitor Sync Progress
 
 **Check last sync time:**
 
@@ -579,7 +542,7 @@ watch kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status
 kubectl get replicationsource <name> -n myapp --context primary -o jsonpath='{.status.lastSyncTime}'
 ```
 
-### Step 15: Test Data Replication
+### Step 14: Test Data Replication
 
 **Write test data on primary:**
 
@@ -614,7 +577,7 @@ EOF
 **Wait for sync to complete:**
 
 ```bash
-# Wait for next sync cycle (based on schedulingInterval in ConfigMap)
+# Wait for next sync cycle (based on schedulingInterval)
 sleep 300  # Wait 5 minutes if schedulingInterval is 5m
 
 # Check sync time updated
@@ -670,32 +633,6 @@ Test data at Fri Apr  5 10:30:00 UTC 2026
 
 ### Common Issues and Solutions
 
-#### Issue: ConfigMap Not Found
-
-```bash
-# Error: Failed to get ConfigMap
-# Solution: Verify ConfigMap exists in the correct namespace
-
-# Check if ConfigMap exists
-kubectl get configmap pvc-config -n myapp --context secondary
-
-# If missing, create it
-kubectl apply -f examples/pvc-configmap.yaml --context secondary
-```
-
-#### Issue: No PVC Configurations Found
-
-```bash
-# Error: No PVC configurations found in ConfigMap
-# Solution: Verify ConfigMap format
-
-# Check ConfigMap content
-kubectl get configmap pvc-config -n myapp --context secondary -o yaml
-
-# Ensure keys follow format: "pvc=<name>/<namespace>"
-# Ensure values follow format: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
-```
-
 #### Issue: VGR Not Becoming Ready
 
 ```bash
@@ -706,17 +643,17 @@ kubectl get vgr myapp-vgr -n myapp -o jsonpath='{.status.conditions[*]}' --conte
 kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary --tail=100
 ```
 
-#### Issue: PVC Namespace Mismatch
+#### Issue: No PVCs Found
 
 ```bash
-# Error: Skipping PVC from different namespace
-# Solution: Ensure PVC namespace in ConfigMap matches VGR namespace
+# Error: No PVCs found matching selector
+# Solution: Verify PVC labels match VGR selector
 
-# Check VGR namespace
-kubectl get vgr myapp-vgr -o jsonpath='{.metadata.namespace}' --context secondary
+# Check VGR selector
+kubectl get vgr myapp-vgr -n myapp -o jsonpath='{.spec.source.selector}' --context primary
 
-# Update ConfigMap to use correct namespace
-# Key format: "pvc=<pvc-name>/<correct-namespace>"
+# Check PVC labels
+kubectl get pvc -n myapp --show-labels --context primary
 ```
 
 #### Issue: Replication Not Syncing
@@ -738,52 +675,6 @@ subctl show connections
 
 ---
 
-## Creating ConfigMap from Primary PVCs
-
-### Helper Script
-
-Save this script to generate a ConfigMap from primary cluster PVCs:
-
-```bash
-#!/bin/bash
-# generate-pvc-configmap.sh
-
-NAMESPACE="${1:-myapp}"
-CONFIGMAP_NAME="${2:-pvc-config}"
-CONTEXT="${3:-primary}"
-SCHEDULING_INTERVAL="${4:-5m}"
-STORAGE_CLASS="${5:-standard}"
-SNAPSHOT_CLASS="${6:-csi-snapclass}"
-
-echo "Generating ConfigMap from PVCs in namespace: $NAMESPACE"
-echo "---"
-echo "apiVersion: v1"
-echo "kind: ConfigMap"
-echo "metadata:"
-echo "  name: $CONFIGMAP_NAME"
-echo "  namespace: $NAMESPACE"
-echo "data:"
-
-# Get all PVCs in the namespace
-kubectl get pvc -n "$NAMESPACE" --context "$CONTEXT" -o json | \
-  jq -r '.items[] | "  \"pvc=\(.metadata.name)/\(.metadata.namespace)\": \"schedulingInterval='$SCHEDULING_INTERVAL':storageClassName='$STORAGE_CLASS':volumeSnapshotClassName='$SNAPSHOT_CLASS'\""'
-```
-
-**Usage:**
-
-```bash
-# Make script executable
-chmod +x generate-pvc-configmap.sh
-
-# Generate ConfigMap for myapp namespace
-./generate-pvc-configmap.sh myapp pvc-config primary 5m standard csi-snapclass > pvc-configmap.yaml
-
-# Apply to secondary cluster
-kubectl apply -f pvc-configmap.yaml --context secondary
-```
-
----
-
 ## Cleanup
 
 To remove the deployment:
@@ -792,9 +683,6 @@ To remove the deployment:
 # Delete VGRs
 kubectl delete vgr myapp-vgr -n myapp --context primary
 kubectl delete vgr myapp-vgr -n myapp --context secondary
-
-# Delete ConfigMap
-kubectl delete configmap pvc-config -n myapp --context secondary
 
 # Delete VGRClass
 kubectl delete volumegroupreplicationclass mock-vgr-class --context primary
@@ -824,6 +712,6 @@ kubectl delete -k "github.com/csi-addons/kubernetes-csi-addons/config/crd?ref=v0
 
 ---
 
-**Document Version:** 2.0  
-**Last Updated:** 2026-04-05  
-**Operator Version:** latest (ConfigMap-based configuration)
+**Document Version:** 3.0  
+**Last Updated:** 2026-04-22  
+**Operator Version:** latest (Label selector-based configuration)

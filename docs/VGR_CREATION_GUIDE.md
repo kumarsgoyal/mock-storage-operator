@@ -1,41 +1,41 @@
 # VolumeGroupReplication Creation Guide
 
-This guide provides detailed instructions for creating VolumeGroupReplication (VGR) resources using the Mock Storage Operator with ConfigMap-based PVC configuration.
+This guide provides detailed instructions for creating VolumeGroupReplication (VGR) resources using the Mock Storage Operator with label selector-based PVC discovery.
 
 ## Table of Contents
 1. [Overview](#overview)
 2. [Prerequisites](#prerequisites)
-3. [Understanding the ConfigMap](#understanding-the-configmap)
-4. [Creating the ConfigMap](#creating-the-configmap)
-5. [Creating VGR Resources](#creating-vgr-resources)
-6. [Verification](#verification)
-7. [Common Scenarios](#common-scenarios)
+3. [Understanding Label Selectors](#understanding-label-selectors)
+4. [Creating VGR Resources](#creating-vgr-resources)
+5. [Verification](#verification)
+6. [Common Scenarios](#common-scenarios)
 
 ---
 
 ## Overview
 
-The Mock Storage Operator uses a ConfigMap-based approach for PVC configuration. This means:
+The Mock Storage Operator uses a label selector-based approach for PVC discovery. This means:
 
-1. **Primary Cluster**: Has the actual PVCs with application data
-2. **Secondary Cluster**: Needs a ConfigMap that describes which PVCs to replicate and how
-3. **ConfigMap**: Contains per-PVC configuration (scheduling, storage class, snapshot class)
+1. **Primary Cluster**: PVCs must have labels that match the VGR's selector
+2. **Secondary Cluster**: The same PVCs (with matching labels) are discovered automatically
+3. **Configuration**: Comes from VGRClass parameters and optional PVC annotations
 
 ### Workflow
 
 ```
 Primary Cluster                    Secondary Cluster
 ┌─────────────────┐               ┌──────────────────┐
-│ PVCs with data  │               │ ConfigMap        │
-│ - mysql-data    │               │ - Describes PVCs │
-│ - postgres-data │               │ - Configuration  │
+│ PVCs with       │               │ PVCs with        │
+│ matching labels │               │ matching labels  │
+│ - mysql-data    │               │ - mysql-data     │
+│ - postgres-data │               │ - postgres-data  │
 └─────────────────┘               └──────────────────┘
         │                                  │
         │                                  │
         ▼                                  ▼
 ┌─────────────────┐               ┌──────────────────┐
 │ VGR (primary)   │               │ VGR (secondary)  │
-│ - Finds PVCs    │◄─────────────►│ - Reads ConfigMap│
+│ - Finds PVCs    │◄─────────────►│ - Finds PVCs     │
 │ - Creates RS    │   Replication │ - Creates RD     │
 └─────────────────┘               └──────────────────┘
 ```
@@ -60,235 +60,139 @@ Before creating VGR resources, ensure:
 
 ### On Secondary Cluster
 
-- ✅ ConfigMap with PVC configuration is created
-- ✅ Storage classes specified in ConfigMap exist
-- ✅ Volume snapshot classes specified in ConfigMap exist
+- ✅ Storage classes exist for ReplicationDestinations
+- ✅ Volume snapshot classes exist (if using snapshots)
 
 ---
 
-## Understanding the ConfigMap
+## Understanding Label Selectors
 
-### ConfigMap Structure
+### How It Works
+
+The VGR uses a Kubernetes label selector to find PVCs to replicate. This is the same mechanism used by Deployments, Services, and other Kubernetes resources.
+
+### Label Selector Format
+
+```yaml
+spec:
+  source:
+    selector:
+      matchLabels:
+        app: myapp
+        tier: database
+```
+
+This selector will match any PVC with **both** labels:
+- `app=myapp`
+- `tier=database`
+
+### PVC Labeling
+
+PVCs must have labels that match the VGR selector:
 
 ```yaml
 apiVersion: v1
-kind: ConfigMap
+kind: PersistentVolumeClaim
 metadata:
-  name: pvc-config
-  namespace: myapp  # Must match VGR namespace
-data:
-  # Key format: "pvc=<pvc-name>/<namespace>"
-  # Value format: "schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>"
-  "pvc=mysql-data/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-```
-
-### Key Format
-
-**Pattern**: `pvc=<pvc-name>/<namespace>`
-
-- **pvc=**: Required prefix
-- **<pvc-name>**: Name of the PVC on the primary cluster
-- **<namespace>**: Namespace where the PVC exists (must match VGR namespace)
-
-**Examples:**
-```yaml
-"pvc=mysql-data/myapp"           # PVC named "mysql-data" in "myapp" namespace
-"pvc=postgres-data/database"     # PVC named "postgres-data" in "database" namespace
-"pvc=app-config/production"      # PVC named "app-config" in "production" namespace
-```
-
-### Value Format
-
-**Pattern**: `schedulingInterval=<value>:storageClassName=<value>:volumeSnapshotClassName=<value>`
-
-All three parameters are **required** and separated by colons (`:`).
-
-#### schedulingInterval
-
-How often to sync data from primary to secondary.
-
-**Formats:**
-- Duration: `3m`, `5m`, `1h`, `30s`
-- Cron: `*/5 * * * *` (every 5 minutes), `0 * * * *` (hourly)
-
-**Examples:**
-```
-schedulingInterval=3m          # Every 3 minutes
-schedulingInterval=5m          # Every 5 minutes
-schedulingInterval=1h          # Every hour
-schedulingInterval=*/5 * * * * # Every 5 minutes (cron)
-schedulingInterval=0 2 * * *   # Daily at 2 AM (cron)
-```
-
-#### storageClassName
-
-Storage class to use for the ReplicationDestination PVC on the secondary cluster.
-
-**Must be:**
-- A valid storage class that exists on the secondary cluster
-- Compatible with the access modes required
-- Able to provision the required capacity
-
-**Examples:**
-```
-storageClassName=standard
-storageClassName=fast-ssd
-storageClassName=rook-cephfs
-storageClassName=rook-ceph-block
-```
-
-#### volumeSnapshotClassName
-
-Volume snapshot class to use for creating snapshots on the primary cluster.
-
-**Must be:**
-- A valid volume snapshot class that exists on the primary cluster
-- Compatible with the storage class of the source PVC
-- Able to create snapshots of the PVC
-
-**Examples:**
-```
-volumeSnapshotClassName=csi-snapclass
-volumeSnapshotClassName=csi-cephfsplugin-snapclass
-volumeSnapshotClassName=csi-rbdplugin-snapclass
-```
-
-### Complete Examples
-
-#### Example 1: Single PVC
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
+  name: mysql-data
   namespace: myapp
-data:
-  "pvc=mysql-data/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+  labels:
+    app: myapp        # Matches selector
+    tier: database    # Matches selector
+spec:
+  # ... PVC spec
 ```
 
-#### Example 2: Multiple PVCs with Different Settings
+### Best Practices
 
+1. **Use consistent labels** - Apply the same labels across all PVCs you want to replicate
+2. **Be specific** - Use multiple labels to avoid accidentally selecting unwanted PVCs
+3. **Document your labels** - Keep a record of which labels are used for replication
+4. **Avoid conflicts** - Don't use labels that might match VolSync-owned PVCs
+
+### Common Label Patterns
+
+#### Pattern 1: Application-based
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
-  namespace: myapp
-data:
-  # Database - critical, sync every 3 minutes
-  "pvc=mysql-data/myapp": "schedulingInterval=3m:storageClassName=fast-ssd:volumeSnapshotClassName=csi-snapclass"
-  
-  # Application data - moderate, sync every 10 minutes
-  "pvc=app-data/myapp": "schedulingInterval=10m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  
-  # Logs - low priority, sync hourly
-  "pvc=logs/myapp": "schedulingInterval=1h:storageClassName=slow-hdd:volumeSnapshotClassName=csi-snapclass"
+labels:
+  app: myapp
 ```
+Matches all PVCs for a specific application.
 
-#### Example 3: Using Cron Expressions
-
+#### Pattern 2: Tier-based
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
-  namespace: production
-data:
-  # Sync every 5 minutes
-  "pvc=data1/production": "schedulingInterval=*/5 * * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  
-  # Sync every hour at minute 0
-  "pvc=data2/production": "schedulingInterval=0 * * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  
-  # Sync daily at 2 AM
-  "pvc=data3/production": "schedulingInterval=0 2 * * *:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
+labels:
+  app: myapp
+  tier: database
 ```
+Matches only database PVCs for an application.
 
----
-
-## Creating the ConfigMap
-
-### Step 1: List PVCs on Primary Cluster
-
-First, identify which PVCs you want to replicate:
-
-```bash
-# List all PVCs in the namespace
-kubectl get pvc -n myapp --context primary
-
-# Get detailed information
-kubectl get pvc -n myapp --context primary -o wide
-
-# Check PVC labels
-kubectl get pvc -n myapp --context primary --show-labels
+#### Pattern 3: Environment-based
+```yaml
+labels:
+  app: myapp
+  environment: production
 ```
-
-**Example output:**
-```
-NAME            STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE   LABELS
-mysql-data      Bound    pvc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   10Gi       RWO            standard       5d    app=myapp,tier=database
-postgres-data   Bound    pvc-yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy   5Gi        RWO            standard       5d    app=myapp,tier=database
-app-config      Bound    pvc-zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz   1Gi        RWO            standard       5d    app=myapp,tier=config
-```
-
-### Step 2: Check Available Resources on Secondary
-
-Verify that the required storage classes and snapshot classes exist:
-
-```bash
-# Check storage classes
-kubectl get storageclass --context secondary
-
-# Check volume snapshot classes
-kubectl get volumesnapshotclass --context secondary
-```
-
-### Step 3: Create the ConfigMap
-
-Create a ConfigMap file based on your PVCs:
-
-```bash
-cat <<EOF > pvc-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
-  namespace: myapp
-data:
-  # Add entries for each PVC you want to replicate
-  "pvc=mysql-data/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  "pvc=postgres-data/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-  "pvc=app-config/myapp": "schedulingInterval=15m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-EOF
-```
-
-### Step 4: Apply the ConfigMap to Secondary Cluster
-
-```bash
-kubectl apply -f pvc-configmap.yaml --context secondary
-```
-
-### Step 5: Verify the ConfigMap
-
-```bash
-# Check ConfigMap exists
-kubectl get configmap pvc-config -n myapp --context secondary
-
-# View ConfigMap content
-kubectl get configmap pvc-config -n myapp --context secondary -o yaml
-
-# Verify the data section
-kubectl get configmap pvc-config -n myapp --context secondary -o jsonpath='{.data}' | jq
-```
+Matches PVCs for a specific environment.
 
 ---
 
 ## Creating VGR Resources
 
-### Step 1: Create VolumeGroupReplicationClass
+### Step 1: Label Your PVCs
 
-Create the VGRClass on **both clusters**:
+First, ensure your PVCs on the **primary cluster** have appropriate labels:
+
+```bash
+# Check existing PVC labels
+kubectl get pvc -n myapp --show-labels --context primary
+
+# Add labels to existing PVCs if needed
+kubectl label pvc mysql-data -n myapp app=myapp --context primary
+kubectl label pvc postgres-data -n myapp app=myapp --context primary
+```
+
+Or create new PVCs with labels:
+
+```bash
+cat <<EOF | kubectl apply -f - --context primary
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data
+  namespace: myapp
+  labels:
+    app: myapp
+    tier: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: myapp
+  labels:
+    app: myapp
+    tier: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+EOF
+```
+
+### Step 2: Create VolumeGroupReplicationClass
+
+Create VGRClass on **both clusters**:
 
 ```bash
 cat <<EOF | kubectl apply -f - --context primary
@@ -305,12 +209,23 @@ metadata:
 spec:
   provisioner: mock.storage.io
   parameters:
+    # Default scheduling interval (can be overridden per-PVC via annotations)
+    schedulingInterval: "5m"
+    
+    # Default capacity for ReplicationDestinations
     capacity: "10Gi"
+    
+    # Default storage class
+    storageClassName: "standard"
+    
+    # PSK secret name
     pskSecretName: "volsync-rsync-tls-secret"
-    pvcConfigMap: "pvc-config"  # Reference to the ConfigMap
+    
+    # Volume snapshot class (optional)
+    volumeSnapshotClassName: "csi-snapclass"
 EOF
 
-# Apply to secondary as well
+# Apply the same VGRClass on secondary
 kubectl apply -f - --context secondary <<EOF
 apiVersion: replication.storage.openshift.io/v1alpha1
 kind: VolumeGroupReplicationClass
@@ -325,19 +240,23 @@ metadata:
 spec:
   provisioner: mock.storage.io
   parameters:
+    schedulingInterval: "5m"
     capacity: "10Gi"
+    storageClassName: "standard"
     pskSecretName: "volsync-rsync-tls-secret"
-    pvcConfigMap: "pvc-config"
+    volumeSnapshotClassName: "csi-snapclass"
 EOF
 ```
 
 **Important VGRClass Parameters:**
 
-- `capacity`: Default capacity for ReplicationDestinations (can be overridden)
+- `schedulingInterval`: How often to sync (e.g., `5m`, `1h`, or cron format `*/5 * * * *`)
+- `capacity`: Default capacity for ReplicationDestinations
+- `storageClassName`: Default storage class for ReplicationDestinations
 - `pskSecretName`: Name of the PSK secret for rsync-tls authentication
-- `pvcConfigMap`: **Required** - Name of the ConfigMap containing PVC configurations
+- `volumeSnapshotClassName`: Volume snapshot class (optional)
 
-### Step 2: Create Secondary VGR
+### Step 3: Create Secondary VGR
 
 Create the VGR on the **secondary cluster first**:
 
@@ -363,10 +282,10 @@ EOF
 
 - `replicationState`: Set to `secondary` for the destination cluster
 - `volumeGroupReplicationClassName`: Reference to the VGRClass
-- `source.selector`: Label selector (not used on secondary, but required by API)
+- `source.selector`: Label selector to find PVCs to replicate
 - `autoResync`: Enable automatic resync on secondary
 
-### Step 3: Wait for Secondary to be Ready
+### Step 4: Wait for Secondary to be Ready
 
 ```bash
 # Watch VGR status
@@ -391,11 +310,10 @@ status:
   persistentVolumeClaimsRefList:
     - name: mysql-data
     - name: postgres-data
-    - name: app-config
   observedGeneration: 1
 ```
 
-### Step 4: Create Primary VGR
+### Step 5: Create Primary VGR
 
 Create the VGR on the **primary cluster**:
 
@@ -422,7 +340,7 @@ EOF
 - `volumeGroupReplicationClassName`: Reference to the VGRClass
 - `source.selector`: Label selector to find PVCs to replicate
 
-### Step 5: Wait for Primary to be Ready
+### Step 6: Wait for Primary to be Ready
 
 ```bash
 # Watch VGR status
@@ -443,12 +361,11 @@ status:
     - type: Ready
       status: "True"
       reason: ReplicationSourcesCreated
-      message: "3 ReplicationSource(s) active"
+      message: "2 ReplicationSource(s) active"
   persistentVolumeClaimsRefList:
     - name: mysql-data
     - name: postgres-data
-    - name: app-config
-  lastSyncTime: "2026-04-05T10:30:00Z"
+  lastSyncTime: "2026-04-22T10:30:00Z"
   observedGeneration: 1
 ```
 
@@ -503,131 +420,182 @@ watch kubectl get vgr myapp-vgr -n myapp --context primary -o jsonpath='{.status
 ### Scenario 1: Adding a New PVC to Replication
 
 **On Primary:**
-1. Create the new PVC with appropriate labels
-2. Wait for PVC to be bound
-
-**On Secondary:**
-1. Update the ConfigMap to include the new PVC
-2. The operator will automatically detect the change and create a new ReplicationDestination
+1. Create the new PVC with matching labels
+2. The operator will automatically detect it and create a ReplicationSource
 
 ```bash
-# Update ConfigMap
-kubectl edit configmap pvc-config -n myapp --context secondary
+# Create new PVC with matching labels
+cat <<EOF | kubectl apply -f - --context primary
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: myapp
+  labels:
+    app: myapp  # Matches VGR selector
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: standard
+EOF
 
-# Add new entry:
-# "pvc=new-pvc/myapp": "schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-
-# Verify operator picks up the change
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary --tail=20
+# Verify operator picks up the new PVC
+kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context primary --tail=20
 ```
 
-### Scenario 2: Changing Sync Interval
+**On Secondary:**
+The operator will automatically create a ReplicationDestination for the new PVC.
 
-Update the ConfigMap on the secondary cluster:
+### Scenario 2: Changing Sync Interval for Specific PVC
+
+You can override the default scheduling interval using PVC annotations:
 
 ```bash
-# Edit ConfigMap
-kubectl edit configmap pvc-config -n myapp --context secondary
+# Add annotation to PVC on primary
+kubectl annotate pvc mysql-data -n myapp \
+  replication.storage.openshift.io/scheduling-interval=3m \
+  --context primary
 
-# Change schedulingInterval value:
-# "pvc=mysql-data/myapp": "schedulingInterval=3m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass"
-
-# The operator will reconcile and update the ReplicationDestination
+# The operator will reconcile and update the ReplicationSource
 ```
 
 ### Scenario 3: Removing a PVC from Replication
 
-**On Secondary:**
-1. Remove the PVC entry from the ConfigMap
-2. The operator will clean up the ReplicationDestination
+**On Primary:**
+1. Remove the matching label from the PVC
+2. The operator will clean up the ReplicationSource
 
 ```bash
-# Edit ConfigMap
-kubectl edit configmap pvc-config -n myapp --context secondary
+# Remove the label
+kubectl label pvc redis-data -n myapp app- --context primary
 
-# Remove the line for the PVC you want to stop replicating
-
-# Verify ReplicationDestination is removed
-kubectl get replicationdestinations -n myapp --context secondary
+# Verify ReplicationSource is removed
+kubectl get replicationsources -n myapp --context primary
 ```
 
 ### Scenario 4: Multi-Namespace Setup
 
-If you have PVCs in different namespaces, create separate VGRs and ConfigMaps for each namespace:
+If you have PVCs in different namespaces, create separate VGRs for each namespace:
 
 ```bash
 # Namespace 1: myapp
-kubectl create configmap pvc-config -n myapp --context secondary --from-literal='pvc=data1/myapp'='schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass'
+cat <<EOF | kubectl apply -f - --context primary
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  name: myapp-vgr
+  namespace: myapp
+spec:
+  replicationState: primary
+  volumeGroupReplicationClassName: mock-vgr-class
+  source:
+    selector:
+      matchLabels:
+        app: myapp
+EOF
 
 # Namespace 2: database
-kubectl create configmap pvc-config -n database --context secondary --from-literal='pvc=data2/database'='schedulingInterval=5m:storageClassName=standard:volumeSnapshotClassName=csi-snapclass'
-
-# Create VGR for each namespace
-kubectl apply -f myapp-vgr.yaml --context secondary
-kubectl apply -f database-vgr.yaml --context secondary
+cat <<EOF | kubectl apply -f - --context primary
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  name: database-vgr
+  namespace: database
+spec:
+  replicationState: primary
+  volumeGroupReplicationClassName: mock-vgr-class
+  source:
+    selector:
+      matchLabels:
+        app: database
+EOF
 ```
+
+### Scenario 5: Using Multiple Label Selectors
+
+For more precise PVC selection, use multiple labels:
+
+```bash
+cat <<EOF | kubectl apply -f - --context primary
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  name: myapp-vgr
+  namespace: myapp
+spec:
+  replicationState: primary
+  volumeGroupReplicationClassName: mock-vgr-class
+  source:
+    selector:
+      matchLabels:
+        app: myapp
+        tier: database
+        environment: production
+EOF
+```
+
+This will only replicate PVCs that have **all three** labels.
 
 ---
 
 ## Troubleshooting
 
-### ConfigMap Issues
+### No PVCs Found
 
-**Problem**: ConfigMap not found
+**Problem**: VGR shows no PVCs in status
 
 ```bash
-# Check if ConfigMap exists
-kubectl get configmap pvc-config -n myapp --context secondary
+# Check VGR selector
+kubectl get vgr myapp-vgr -n myapp -o jsonpath='{.spec.source.selector}' --context primary
 
-# If missing, create it
-kubectl apply -f pvc-configmap.yaml --context secondary
+# Check PVC labels
+kubectl get pvc -n myapp --show-labels --context primary
+
+# Verify labels match
+kubectl get pvc -n myapp -l app=myapp --context primary
 ```
 
-**Problem**: Invalid ConfigMap format
+**Solution**: Ensure PVC labels match the VGR selector exactly.
+
+### PVC Not Being Replicated
+
+**Problem**: Specific PVC not showing up in VGR status
 
 ```bash
-# Verify format
-kubectl get configmap pvc-config -n myapp --context secondary -o yaml
+# Check if PVC has matching labels
+kubectl get pvc <pvc-name> -n myapp --show-labels --context primary
 
-# Check operator logs for parsing errors
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary | grep "invalid key format"
-```
+# Check if PVC is owned by VolSync (should not be)
+kubectl get pvc <pvc-name> -n myapp -o jsonpath='{.metadata.ownerReferences}' --context primary
 
-### PVC Issues
-
-**Problem**: PVC not found in ConfigMap
-
-```bash
 # Check operator logs
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary | grep "No PVC configurations"
-
-# Verify ConfigMap has entries
-kubectl get configmap pvc-config -n myapp --context secondary -o jsonpath='{.data}'
+kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context primary | grep <pvc-name>
 ```
 
-**Problem**: Namespace mismatch
+**Solution**: 
+- Add missing labels to the PVC
+- Ensure PVC is not owned by VolSync
+
+### Replication Not Syncing
+
+**Problem**: lastSyncTime not updating
 
 ```bash
-# Check VGR namespace
-kubectl get vgr myapp-vgr -o jsonpath='{.metadata.namespace}' --context secondary
+# Check ReplicationSource status
+kubectl get replicationsource -n myapp --context primary -o yaml
 
-# Ensure ConfigMap PVC entries use the same namespace
-# Key format: "pvc=<name>/<namespace>" where namespace matches VGR namespace
-```
+# Check ReplicationDestination status
+kubectl get replicationdestination -n myapp --context secondary -o yaml
 
-### Replication Issues
+# Verify PSK secrets match
+kubectl get secret volsync-rsync-tls-secret -n myapp --context primary -o jsonpath='{.data.psk\.txt}' | base64 -d
+kubectl get secret volsync-rsync-tls-secret -n myapp --context secondary -o jsonpath='{.data.psk\.txt}' | base64 -d
 
-**Problem**: ReplicationDestination not created
-
-```bash
-# Check operator logs
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary --tail=100
-
-# Verify storage class exists
-kubectl get storageclass <storage-class-name> --context secondary
-
-# Verify snapshot class exists
-kubectl get volumesnapshotclass <snapshot-class-name> --context secondary
+# Check network connectivity (if using Submariner)
+subctl show connections
 ```
 
 ---
@@ -636,35 +604,23 @@ kubectl get volumesnapshotclass <snapshot-class-name> --context secondary
 
 1. **Always create secondary VGR first** - This ensures ReplicationDestinations are ready before ReplicationSources try to connect
 
-2. **Use consistent naming** - Keep PVC names, namespaces, and ConfigMap names consistent across clusters
+2. **Use consistent labeling** - Apply the same labels across all PVCs you want to replicate
 
-3. **Document your ConfigMap** - Add comments in the ConfigMap to explain each PVC's purpose
+3. **Be specific with selectors** - Use multiple labels to avoid accidentally selecting unwanted PVCs
 
-4. **Test with one PVC first** - Before replicating multiple PVCs, test with a single PVC to ensure everything works
+4. **Document your labels** - Keep a record of which labels are used for replication
 
-5. **Monitor sync times** - Regularly check `lastSyncTime` in VGR status to ensure replication is working
+5. **Test with one PVC first** - Before replicating multiple PVCs, test with a single PVC to ensure everything works
 
-6. **Use appropriate intervals** - Balance RPO requirements with network bandwidth and storage performance
+6. **Monitor sync times** - Regularly check `lastSyncTime` in VGR status to ensure replication is working
 
-7. **Keep ConfigMap in version control** - Store your ConfigMap YAML in git for easy tracking and rollback
+7. **Use appropriate intervals** - Balance RPO requirements with network bandwidth and storage performance
 
-8. **Validate before applying** - Use `kubectl apply --dry-run=client` to validate YAML before applying
+8. **Keep VGRClass consistent** - Use the same VGRClass on both clusters for consistency
 
 ---
 
 ## Quick Reference
-
-### ConfigMap Template
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pvc-config
-  namespace: <namespace>
-data:
-  "pvc=<pvc-name>/<namespace>": "schedulingInterval=<interval>:storageClassName=<class>:volumeSnapshotClassName=<snapclass>"
-```
 
 ### VGR Template (Secondary)
 
@@ -701,8 +657,31 @@ spec:
         app: <app-label>
 ```
 
+### PVC Template with Labels
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: <pvc-name>
+  namespace: <namespace>
+  labels:
+    app: <app-label>
+    tier: <tier-label>
+  annotations:
+    # Optional: Override default scheduling interval
+    replication.storage.openshift.io/scheduling-interval: "3m"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: <size>
+  storageClassName: <storage-class>
+```
+
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-04-05  
-**Operator Version:** latest (ConfigMap-based configuration)
+**Document Version:** 2.0  
+**Last Updated:** 2026-04-22  
+**Operator Version:** latest (Label selector-based configuration)
