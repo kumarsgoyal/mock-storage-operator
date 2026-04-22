@@ -78,7 +78,7 @@ NAME                       READY   STATUS    RESTARTS   AGE
 volsync-7b8c9d5f4d-xxxxx   1/1     Running   0          1m
 ```
 
-### 3. Submariner (Optional but Recommended)
+### 3. Submariner
 
 For multi-cluster networking, install Submariner. Follow the [Submariner installation guide](https://submariner.io/getting-started/).
 
@@ -92,10 +92,8 @@ kubectl get storageclass
 ```
 
 You'll need:
-- A storage class for PVC provisioning, for now, for drenv, use `standard`
-
-> [!IMPORTANT]
-> **For now, use cephfs StorageClass. We'll switch to LSO/LVM later.**
+- **For drenv environment**: Use `standard` storage class
+- **For non-drenv setup**: Use `cephfs` storage class or LSO/LVM-based storage classes
 
 ---
 
@@ -429,45 +427,66 @@ kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --cont
 
 ### VGRClass Parameters Explained
 
-#### Global Parameters
+#### VGRClass Parameters
 
 | Parameter | Description | Example | Required |
 |-----------|-------------|---------|----------|
-| `capacity` | Default capacity for ReplicationDestinations | `"10Gi"` | Yes |
-| `pskSecretName` | Custom PSK secret name | `"my-secret"` | No |
+| `schedulingInterval` | Default sync frequency | `"5m"`, `"1h"`, or cron format | No (default: `"5m"`) |
+| `capacity` | Default capacity for ReplicationDestinations | `"10Gi"` | No (default: `"1Gi"`) |
+| `storageClassName` | Default storage class | `"standard"` | No (default: `"standard"`) |
+| `pskSecretName` | PSK secret name for rsync-tls | `"volsync-rsync-tls-secret"` | No |
+| `volumeSnapshotClassName` | Volume snapshot class | `"csi-snapclass"` | No |
 
 #### Per-PVC Configuration
 
-PVC configuration is now done through **PVC annotations and labels** instead of ConfigMap:
+PVC configuration is done through **PVC annotations and labels**:
 
 | Annotation/Label | Description | Example | Default |
 |------------------|-------------|---------|---------|
-| `replication.storage.openshift.io/scheduling-interval` (annotation) | Sync frequency (duration format) | `"5m"` or `"10m"` | `"5m"` |
+| `replication.storage.openshift.io/scheduling-interval` (annotation) | Override sync frequency | `"3m"`, `"10m"`, `"1h"` | Uses VGRClass default |
 | `ramendr.openshift.io/consistency-group` (label) | Consistency group identifier | `"test-group-1"` | (empty) |
+| `app` (label) | Application identifier for VGR selector | `"myapp"` | Required for selection |
 
 **Note:** Storage class and capacity are taken directly from the PVC spec.
 
 ### Configuration Examples
 
-#### Example 1: Single PVC with 5-minute sync
+#### Example 1: VGRClass with Default Settings
 
 ```yaml
-parameters:
-  capacity: "10Gi"
-  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=rook-cephfs:consistencyGroup=test-group-1"
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplicationClass
+metadata:
+  name: mock-vgr-class
+spec:
+  provisioner: mock.storage.io
+  parameters:
+    schedulingInterval: "5m"
+    capacity: "10Gi"
+    storageClassName: "standard"
+    pskSecretName: "volsync-rsync-tls-secret"
 ```
 
-#### Example 2: Multiple PVCs with different schedules
+#### Example 2: PVC with Custom Sync Interval
 
 ```yaml
-parameters:
-  capacity: "10Gi"
-  # Database - sync every 5 minutes
-  pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=fast-ssd:consistencyGroup=test-group-1"
-  # Application data - sync every 15 minutes
-  pvc=app-data/myapp: "schedulingInterval=15m:storageClassName=standard:consistencyGroup=test-group-1"
-  # Logs - sync every hour
-  pvc=logs/myapp: "schedulingInterval=1h:storageClassName=slow-hdd:consistencyGroup=test-group-1"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data
+  namespace: myapp
+  labels:
+    app: myapp
+    ramendr.openshift.io/consistency-group: test-group-1
+  annotations:
+    replication.storage.openshift.io/scheduling-interval: "3m"  # Override default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
 ```
 
 #### Example 3: Using cron expressions
