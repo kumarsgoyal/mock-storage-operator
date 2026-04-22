@@ -428,6 +428,22 @@ chmod +x migrate-pvc-pv.sh
 ./migrate-pvc-pv.sh <LABEL_QUERY> <C1> <C2> <VGR_NAME> <VGR_NS> <VGR_CLASS>
 ```
 
+**Arguments:**
+- `LABEL_QUERY`: Label selector to identify PVCs to migrate. Found in the PVC's `metadata.labels`:
+  ```yaml
+  apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    labels:
+      ramendr.openshift.io/consistency-group: 48cc84f712b8dcb1f9ea
+  ```
+  Use format: `'ramendr.openshift.io/consistency-group=<cg-id>'`
+- `C1`: Kubernetes context name for the primary (source) cluster
+- `C2`: Kubernetes context name for the secondary (destination) cluster
+- `VGR_NAME`: Name for the VolumeGroupReplication resource to create on secondary cluster (use the VGR name from the primary cluster)
+- `VGR_NS`: Namespace where the VGR will be created (typically `ramen-system`)
+- `VGR_CLASS`: Name of the VolumeGroupReplicationClass to use
+
 **Example:**
 ```bash
 ./migrate-pvc-pv.sh \
