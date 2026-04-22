@@ -93,7 +93,7 @@ kubectl get storageclass
 
 You'll need:
 - **For drenv environment**: Use `standard` storage class
-- **For non-drenv setup**: Use `cephfs` storage class or LSO/LVM-based storage classes
+- **For non-drenv setup**: Use LSO/LVM-based storage classes (e.g., `lvm-vg1`)
 
 ---
 
@@ -169,7 +169,7 @@ metadata:
 spec:
   parameters:
     schedulingInterval: 5m
-  provisioner: openshift-storage.cephfs.csi.ceph.com
+  provisioner: mock.storage.io
 ```
 
 Apply on both clusters:
@@ -206,7 +206,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   labels:
-    ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+    ramendr.openshift.io/consistency-group: test-group-1
   name: mock-pvc-test
   namespace: default
 spec:
@@ -246,7 +246,7 @@ spec:
   source:
     selector:
       matchLabels:
-        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+        ramendr.openshift.io/consistency-group: test-group-1
   volumeGroupReplicationClassName: vgrc-1
 ```
 
@@ -351,7 +351,7 @@ chmod +x migrate-pvc-pv.sh
 **Run the migration:**
 ```bash
 ./migrate-pvc-pv.sh \
-  'ramendr.openshift.io/consistency-group=test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7' \
+  'ramendr.openshift.io/consistency-group=test-group-1' \
   primary \
   secondary
 ```
@@ -368,7 +368,7 @@ chmod +x migrate-pvc-pv.sh
 kubectl get pv --context secondary
 
 # Check PVCs on secondary
-kubectl get pvc -A --context secondary -l 'ramendr.openshift.io/consistency-group=test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7'
+kubectl get pvc -A --context secondary -l 'ramendr.openshift.io/consistency-group=test-group-1'
 
 # Verify Ramen restore annotation
 kubectl get pvc -A --context secondary -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.volumereplicationgroups\.ramendr\.openshift\.io/ramen-restore}{"\n"}{end}'
@@ -394,7 +394,7 @@ spec:
   source:
     selector:
       matchLabels:
-        ramendr.openshift.io/consistency-group: test-cephfs-2-e4a02bacdfc23f75dec634e95107cba7
+        ramendr.openshift.io/consistency-group: test-group-1
   volumeGroupReplicationClassName: vgrc-1
 ```
 
