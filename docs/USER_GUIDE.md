@@ -423,13 +423,18 @@ echo "Migration and VGR creation complete."
 chmod +x migrate-pvc-pv.sh
 ```
 
-**Run the migration:**
+**Usage:**
+```bash
+./migrate-pvc-pv.sh <LABEL_QUERY> <C1> <C2> <VGR_NAME> <VGR_NS> <VGR_CLASS>
+```
+
+**Example:**
 ```bash
 ./migrate-pvc-pv.sh \
-  'ramendr.openshift.io/consistency-group=my-cg' \
-  primary \
-  secondary \
-  vgr-1 \
+  'ramendr.openshift.io/consistency-group=48cc84f712b8dcb1f9ea' \
+  dr1 \
+  dr2 \
+  global-48cc84f712b8dcb1f9ea \
   ramen-system \
   vgrc-1
 ```
