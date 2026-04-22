@@ -146,10 +146,10 @@ Deploy on **both clusters**:
 
 ```bash
 # Deploy on primary cluster
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main --context primary
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context primary
 
 # Deploy on secondary cluster
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main --context secondary
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context secondary
 ```
 
 **What this deploys:**
@@ -689,8 +689,8 @@ kubectl delete volumegroupreplicationclass mock-vgr-class --context primary
 kubectl delete volumegroupreplicationclass mock-vgr-class --context secondary
 
 # Delete operator
-kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main --context primary
-kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main --context secondary
+kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context primary
+kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context secondary
 
 # Delete VolSync
 helm uninstall volsync -n volsync-system --kube-context primary

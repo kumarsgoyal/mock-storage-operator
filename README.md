@@ -66,7 +66,7 @@ The operator is available as a multi-architecture container image on Quay.io and
 
 ```bash
 # Deploy on both clusters (primary and secondary)
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage
 ```
 
 **What this does:**
@@ -91,10 +91,10 @@ kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator -f
 
 ```bash
 # Deploy only RBAC
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/rbac?ref=main
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/rbac?ref=agnostic-storage
 
 # Deploy only manager
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/manager?ref=main
+kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/manager?ref=agnostic-storage
 ```
 </details>
 
@@ -164,7 +164,7 @@ kubectl apply -k config/default
 
 ```bash
 # Remove the operator
-kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=main
+kubectl delete -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage
 
 # Or using make
 make undeploy
