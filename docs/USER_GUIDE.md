@@ -497,25 +497,11 @@ kubectl get vgr -n ramen-system --context secondary
 kubectl get pvc -A --context secondary -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.volumereplicationgroups\.ramendr\.openshift\.io/ramen-restore}{"\n"}{end}'
 ```
 
-### Step 9: Monitor Secondary VGR
+---
 
-The secondary VGR created by the migration script will:
-1. Use the label selector to find matching PVCs
-2. Create ReplicationDestinations for each PVC
-3. Create destination PVCs with the same labels and specifications
-4. Wait for primary to connect
+# Advanced Configuration and Reference
 
-**Monitor deployment:**
-```bash
-# Watch VGR status
-kubectl get vgr vgr-1 -n default --context secondary -w
-
-# Check ReplicationDestinations
-kubectl get replicationdestinations -n default --context secondary
-
-# Check operator logs for service addresses
-kubectl logs -n mock-storage-operator-system -l app=mock-storage-operator --context secondary
-```
+The following sections provide additional configuration options, troubleshooting guidance, and reference information for advanced use cases.
 
 ---
 
