@@ -22,7 +22,7 @@ import (
 const (
 	requeueInterval     = 30 * time.Second
 	vgrFinalizer        = "mock.storage.io/volumegroupreplication"
-	mockProvisionerName = "mock.storage.io"
+	mockProvisionerName = "k8s.io/minikube-hostpath"
 	remoteAddressKey    = "mock.storage.io/remote-address"
 	remoteKeySecretKey  = "mock.storage.io/remote-key-secret"
 )
@@ -62,7 +62,7 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
-	// Check if this VGR is for our provisioner (mock.storage.io)
+	// Check if this VGR is for our provisioner (k8s.io/minikube-hostpath)
 	if vgrClass.Spec.Provisioner != mockProvisionerName {
 		logger.V(1).Info("VGR not for this provisioner, skipping", "provisioner", vgrClass.Spec.Provisioner)
 		return ctrl.Result{}, nil
@@ -224,7 +224,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	vgrClass *volrep.VolumeGroupReplicationClass,
 ) (ctrl.Result, error) {
 	logger = logger.WithValues("vgr", vgr.Name, "vgrClass", vgrClass.Name)
-	
+
 	logger.V(1).Info("Reconciling VolumeGroupReplication as secondary")
 
 	// Get PVCs based on selector (same as primary)

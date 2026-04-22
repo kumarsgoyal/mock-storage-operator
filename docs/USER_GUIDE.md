@@ -171,7 +171,7 @@ metadata:
     ramendr.openshift.io/global: "true"  # Marks this as a global VGRClass
   name: mock-vgr-class
 spec:
-  provisioner: mock.storage.io  # Use LSO provisioner if using Red Hat Local Storage Operator
+  provisioner: k8s.io/minikube-hostpath  # Use LSO provisioner if using Red Hat Local Storage Operator
   parameters:
     schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
 ```
@@ -192,7 +192,7 @@ metadata:
     # No global label - this is namespace-scoped
   name: mock-vgr-class-ns
 spec:
-  provisioner: mock.storage.io  # Use LSO provisioner if using Red Hat Local Storage Operator
+  provisioner: k8s.io/minikube-hostpath  # Use LSO provisioner if using Red Hat Local Storage Operator
   parameters:
     schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
 ```
@@ -208,8 +208,7 @@ kubectl get volumegroupreplicationclass
 ```
 
 > [!NOTE]
-> - The operator processes VGRs for both global and non-global VGRClasses as long as the provisioner is `mock.storage.io`.
-> - **provisioner**: Use `mock.storage.io` for testing. If using Red Hat Local Storage Operator (LSO), use the LSO provisioner name instead.
+> - **provisioner**: Use `k8s.io/minikube-hostpath` for testing. If using Red Hat Local Storage Operator (LSO), use the LSO provisioner name instead.
 > - **schedulingInterval**: Set to `"0m"` for Metro (synchronous replication), or a value greater than `"0m"` (e.g., `"5m"`) for Regional DR (asynchronous replication).
 
 ---
@@ -489,7 +488,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: mock-vgr-class
 spec:
-  provisioner: mock.storage.io
+  provisioner: k8s.io/minikube-hostpath
   parameters:
     schedulingInterval: "5m"
     capacity: "10Gi"
@@ -576,7 +575,7 @@ parameters:
    metadata:
      name: mock-vgr-class
    spec:
-     provisioner: mock.storage.io
+     provisioner: k8s.io/minikube-hostpath
      parameters:
        capacity: "10Gi"
        pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=standard:consistencyGroup=test-group-1"
@@ -668,7 +667,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: mock-vgr-class
 spec:
-  provisioner: mock.storage.io
+  provisioner: k8s.io/minikube-hostpath
   parameters:
     capacity: "10Gi"
     # Database - critical, sync every 5 minutes
@@ -919,7 +918,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: demo-vgr-class
 spec:
-  provisioner: mock.storage.io
+  provisioner: k8s.io/minikube-hostpath
   parameters:
     capacity: "5Gi"
     pvc=demo-data/demo-app: "schedulingInterval=3m:storageClassName=standard:consistencyGroup=demo-group"

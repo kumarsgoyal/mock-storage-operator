@@ -169,7 +169,7 @@ A Kubernetes custom resource that defines replication for a group of PVCs. It ha
 
 ### VolumeGroupReplicationClass (VGRClass)
 Defines configuration for VGR resources, including:
-- Provisioner name (`mock.storage.io`)
+- Provisioner name (`k8s.io/minikube-hostpath`)
 - Per-PVC parameters (scheduling, storage classes)
 - Global settings (capacity, PSK secret name)
 

@@ -22,7 +22,7 @@ RAMEN (DR Orchestrator)
   | Creates VolumeGroupReplication CR
   |
   v
-MOCK STORAGE OPERATOR (provisioner: mock.storage.io)
+MOCK STORAGE OPERATOR (provisioner: k8s.io/minikube-hostpath)
   |
   | Reconciles VGR based on replicationState
   |
@@ -181,7 +181,7 @@ kubectl apply -f examples/volumegroupreplicationclass.yaml
 ```
 
 This class specifies:
-- `provisioner: mock.storage.io` - tells the operator to handle VGRs using this class
+- `provisioner: k8s.io/minikube-hostpath` - tells the operator to handle VGRs using this class
 - Default parameters (capacity, storageClassName, schedule, pskSecretName, etc.)
 
 ### 2. Deploy on Secondary Cluster
@@ -299,7 +299,7 @@ VolumeGroupReplication CR
 
 VolumeGroupReplicationClass
   ├── Spec
-  │   ├── provisioner: mock.storage.io
+  │   ├── provisioner: k8s.io/minikube-hostpath
   │   └── parameters:
   │       ├── schedulingInterval: "5m" (or cron format)
   │       ├── capacity: "10Gi"
