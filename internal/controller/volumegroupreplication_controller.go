@@ -62,10 +62,15 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
-	if vgrClass.GetLabels()["ramendr.openshift.io/global"] != "true" {
+	// Check if this VGR is for our provisioner (mock.storage.io)
+	if vgrClass.Spec.Provisioner != mockProvisionerName {
 		logger.V(1).Info("VGR not for this provisioner, skipping", "provisioner", vgrClass.Spec.Provisioner)
 		return ctrl.Result{}, nil
 	}
+
+	// Log whether this is a global or non-global VGR
+	isGlobal := vgrClass.GetLabels()["ramendr.openshift.io/global"] == "true"
+	logger.V(1).Info("Processing VGR", "provisioner", vgrClass.Spec.Provisioner, "global", isGlobal)
 
 	// Handle deletion
 	if !vgr.DeletionTimestamp.IsZero() {

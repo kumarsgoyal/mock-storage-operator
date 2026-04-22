@@ -153,7 +153,11 @@ kubectl create secret generic volsync-rsync-tls-secret \
 
 Create the VGRClass on **both clusters**. This defines how the operator should handle replication.
 
-Save the following as `vgrclass.yaml`:
+The operator supports two types of VGRClass:
+
+#### Global VGRClass
+
+Used for cluster-scoped replication managed by Ramen. Include the `ramendr.openshift.io/global: "true"` label:
 
 ```yaml
 apiVersion: replication.storage.openshift.io/v1alpha1
@@ -164,15 +168,36 @@ metadata:
   labels:
     ramendr.openshift.io/groupreplicationid: 48cc84f712b8dcb1f9ea
     ramendr.openshift.io/storageid: e1a9e2831d450379ce51d30a418b2
-    ramendr.openshift.io/global: "true"
-  name: vgrc-1
+    ramendr.openshift.io/global: "true"  # Marks this as a global VGRClass
+  name: mock-vgr-class
 spec:
+  provisioner: mock.storage.io  # Use LSO provisioner if using Red Hat Local Storage Operator
   parameters:
-    schedulingInterval: 5m
-  provisioner: mock.storage.io
+    schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
 ```
 
-Apply on both clusters:
+#### Non-Global VGRClass (Namespace-scoped)
+
+Used for namespace-specific replication. Omit the `ramendr.openshift.io/global` label:
+
+```yaml
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplicationClass
+metadata:
+  annotations:
+    replication.storage.openshift.io/is-default-class: "true"
+  labels:
+    ramendr.openshift.io/groupreplicationid: 48cc84f712b8dcb1f9ea
+    ramendr.openshift.io/storageid: e1a9e2831d450379ce51d30a418b2
+    # No global label - this is namespace-scoped
+  name: mock-vgr-class-ns
+spec:
+  provisioner: mock.storage.io  # Use LSO provisioner if using Red Hat Local Storage Operator
+  parameters:
+    schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
+```
+
+**Apply on both clusters:**
 ```bash
 kubectl apply -f vgrclass.yaml
 ```
@@ -181,6 +206,11 @@ kubectl apply -f vgrclass.yaml
 ```bash
 kubectl get volumegroupreplicationclass
 ```
+
+> [!NOTE]
+> - The operator processes VGRs for both global and non-global VGRClasses as long as the provisioner is `mock.storage.io`.
+> - **provisioner**: Use `mock.storage.io` for testing. If using Red Hat Local Storage Operator (LSO), use the LSO provisioner name instead.
+> - **schedulingInterval**: Set to `"0m"` for Metro (synchronous replication), or a value greater than `"0m"` (e.g., `"5m"`) for Regional DR (asynchronous replication).
 
 ---
 
