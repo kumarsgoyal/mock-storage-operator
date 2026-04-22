@@ -315,61 +315,107 @@ Save as `migrate-pvc-pv.sh`:
 ```bash
 #!/bin/bash
 
-# Usage: ./migrate-pvc-pv.sh <LABEL> <CONTEXT_C1> <CONTEXT_C2>
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <LABEL> <CONTEXT_C1> <CONTEXT_C2>"
+# Usage check for 6 arguments
+if [ "$#" -ne 6 ]; then
+    echo "Usage: $0 <LABEL_QUERY> <CONTEXT_C1> <CONTEXT_C2> <VGR_NAME> <VGR_NAMESPACE> <VGR_CLASS>"
+    echo "Example: $0 'ramendr.openshift.io/consistency-group=my-cg' c1 c2 vgr-1 ramen-system vgrc-1"
     exit 1
 fi
 
-LABEL=$1
+# Assign arguments
+LABEL_QUERY=$1
 CONTEXT_C1=$2
 CONTEXT_C2=$3
-RESTORE_ANN="volumereplicationgroups.ramendr.openshift.io/ramen-restore"
+VGR_NAME=$4
+VGR_NAMESPACE=$5
+VGR_CLASS=$6
 
-# Standardize the JQ filter for a "clean" slate
-# 1. del(...) removes system-generated fields and ALL existing annotations
-# 2. .metadata.annotations = ... initializes a fresh object with ONLY your key
-JQ_FILTER='del(
+# Extract CG value
+CG_VALUE=$(echo "$LABEL_QUERY" | cut -d'=' -f2)
+
+RESTORE_ANN="volumereplicationgroups.ramendr.openshift.io/ramen-restore"
+ACM_PREFIX="apps.open-cluster-management.io"
+CG_LABEL="ramendr.openshift.io/consistency-group"
+
+# Base cleaning logic (Notice: .metadata.annotations is removed from the wipe list)
+BASE_CLEAN='del(
     .metadata.resourceVersion,
     .metadata.uid,
     .metadata.creationTimestamp,
-    .metadata.annotations,
     .metadata.managedFields,
     .metadata.ownerReferences,
-    .status,
-    .spec.claimRef
-) | .metadata.annotations = {($ann): "True"}'
+    .status
+)'
 
-echo "Starting clean migration: $CONTEXT_C1 -> $CONTEXT_C2"
+# PV Specific: Wipe all annotations, add Ramen restore, isolate CG label
+JQ_FILTER_PV="$BASE_CLEAN | del(.spec.claimRef, .metadata.annotations)
+  | .metadata.annotations = {(\$ann): \"True\"}
+  | .metadata.labels = {(\$cg_key): .metadata.labels[\$cg_key]}"
 
-# Get PVCs (Namespace:Name)
-PVCS=$(kubectl --context="$CONTEXT_C1" get pvc -A -l "$LABEL" -o jsonpath='{range .items[*]}{.metadata.namespace}{":"}{.metadata.name}{" "}{end}')
+# PVC Specific:
+# 1. del(.metadata.finalizers) -> prevents deletion hangs
+# 2. .metadata.annotations //= {} -> ensure object exists
+# 3. Filter annotations: Keep only ACM keys + add Ramen key
+# 4. .metadata.labels -> isolate CG label
+JQ_FILTER_PVC="$BASE_CLEAN | del(.metadata.finalizers)
+  | .metadata.annotations //= {}
+  | .metadata.annotations |= (with_entries(select(.key | startswith(\"$ACM_PREFIX\"))) + {(\$ann): \"True\"})
+  | .metadata.labels = {(\$cg_key): .metadata.labels[\$cg_key]}"
 
-for entry in $PVCS; do
-    NAMESPACE=$(echo "$entry" | cut -d':' -f1)
-    PVC_NAME=$(echo "$entry" | cut -d':' -f2)
-    
-    # 1. Get PV name
-    PV_NAME=$(kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o jsonpath='{.spec.volumeName}')
-    
-    if [ -n "$PV_NAME" ]; then
-        echo "[PV]  Migrating: $PV_NAME"
-        kubectl --context="$CONTEXT_C1" get pv "$PV_NAME" -o json | \
-        jq --arg ann "$RESTORE_ANN" "$JQ_FILTER" | \
+echo "Starting migration: $CONTEXT_C1 -> $CONTEXT_C2"
+
+# 1. Process PVs and PVCs
+PVCS=$(kubectl --context="$CONTEXT_C1" get pvc -A -l "$LABEL_QUERY" -o jsonpath='{range .items[*]}{.metadata.namespace}{":"}{.metadata.name}{" "}{end}')
+
+if [ -z "$PVCS" ]; then
+    echo "No PVCs found for $LABEL_QUERY"
+else
+    for entry in $PVCS; do
+        NAMESPACE=$(echo "$entry" | cut -d':' -f1)
+        PVC_NAME=$(echo "$entry" | cut -d':' -f2)
+        
+        PV_NAME=$(kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o jsonpath='{.spec.volumeName}')
+        
+        if [ -n "$PV_NAME" ]; then
+            echo "[PV]  Migrating: $PV_NAME"
+            kubectl --context="$CONTEXT_C1" get pv "$PV_NAME" -o json | \
+            jq --arg ann "$RESTORE_ANN" --arg cg_key "$CG_LABEL" "$JQ_FILTER_PV" | \
+            kubectl --context="$CONTEXT_C2" apply -f -
+        fi
+
+        kubectl --context="$CONTEXT_C2" create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl --context="$CONTEXT_C2" apply -f -
+
+        echo "[PVC] Migrating (Filtering ACM Annotations): $NAMESPACE/$PVC_NAME"
+        kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o json | \
+        jq --arg ann "$RESTORE_ANN" --arg cg_key "$CG_LABEL" "$JQ_FILTER_PVC" | \
         kubectl --context="$CONTEXT_C2" apply -f -
-    fi
+    done
+fi
 
-    # 2. Ensure Namespace exists
-    kubectl --context="$CONTEXT_C2" create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl --context="$CONTEXT_C2" apply -f -
+echo "---------------------------------------------------"
+echo "Creating VolumeGroupReplication (VGR) on $CONTEXT_C2..."
 
-    # 3. Migrate PVC
-    echo "[PVC] Migrating: $NAMESPACE/$PVC_NAME"
-    kubectl --context="$CONTEXT_C1" -n "$NAMESPACE" get pvc "$PVC_NAME" -o json | \
-    jq --arg ann "$RESTORE_ANN" "$JQ_FILTER" | \
-    kubectl --context="$CONTEXT_C2" apply -f -
-done
+kubectl --context="$CONTEXT_C2" create namespace "$VGR_NAMESPACE" --dry-run=client -o yaml | kubectl --context="$CONTEXT_C2" apply -f -
 
-echo "Done."
+cat <<EOF | kubectl --context="$CONTEXT_C2" apply -f -
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeGroupReplication
+metadata:
+  labels:
+    ramendr.openshift.io/created-by-ramen: "true"
+  name: $VGR_NAME
+  namespace: $VGR_NAMESPACE
+spec:
+  external: true
+  replicationState: secondary
+  source:
+    selector:
+      matchLabels:
+        $CG_LABEL: $CG_VALUE
+  volumeGroupReplicationClassName: $VGR_CLASS
+EOF
+
+echo "Migration and VGR creation complete."
 ```
 
 **Make the script executable:**
@@ -380,16 +426,21 @@ chmod +x migrate-pvc-pv.sh
 **Run the migration:**
 ```bash
 ./migrate-pvc-pv.sh \
-  'ramendr.openshift.io/consistency-group=test-group-1' \
+  'ramendr.openshift.io/consistency-group=my-cg' \
   primary \
-  secondary
+  secondary \
+  vgr-1 \
+  ramen-system \
+  vgrc-1
 ```
 
 > [!NOTE]
-> This step is **optional** and only needed for DR scenarios where:
-> - Data already exists on shared storage (e.g., CephFS)
-> - You need to recreate PVC/PV resources on the standby cluster
-> - You're performing a failover or relocation operation
+> This migration script:
+> - Migrates PVCs and PVs from primary to secondary cluster
+> - Preserves ACM (Advanced Cluster Management) annotations on PVCs
+> - Isolates only the consistency group label on both PVs and PVCs
+> - Automatically creates the secondary VGR after migration
+> - Removes finalizers to prevent deletion hangs
 
 **Verify migration:**
 ```bash
@@ -397,42 +448,18 @@ chmod +x migrate-pvc-pv.sh
 kubectl get pv --context secondary
 
 # Check PVCs on secondary
-kubectl get pvc -A --context secondary -l 'ramendr.openshift.io/consistency-group=test-group-1'
+kubectl get pvc -A --context secondary -l 'ramendr.openshift.io/consistency-group=my-cg'
+
+# Check VGR on secondary
+kubectl get vgr -n ramen-system --context secondary
 
 # Verify Ramen restore annotation
 kubectl get pvc -A --context secondary -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.volumereplicationgroups\.ramendr\.openshift\.io/ramen-restore}{"\n"}{end}'
 ```
 
-### Step 8: Deploy Secondary VGR
+### Step 8: Monitor Secondary VGR
 
-Now deploy the VGR on the **secondary cluster**. This creates ReplicationDestinations and exposes services.
-
-Save as `secondary-vgr.yaml`:
-
-```yaml
-apiVersion: replication.storage.openshift.io/v1alpha1
-kind: VolumeGroupReplication
-metadata:
-  labels:
-    ramendr.openshift.io/created-by-ramen: "true"
-  name: vgr-1
-  namespace: default
-spec:
-  external: true
-  replicationState: secondary
-  source:
-    selector:
-      matchLabels:
-        ramendr.openshift.io/consistency-group: test-group-1
-  volumeGroupReplicationClassName: vgrc-1
-```
-
-Apply on secondary cluster:
-```bash
-kubectl apply -f secondary-vgr.yaml --context secondary
-```
-
-The secondary cluster will:
+The secondary VGR created by the migration script will:
 1. Use the label selector to find matching PVCs
 2. Create ReplicationDestinations for each PVC
 3. Create destination PVCs with the same labels and specifications
