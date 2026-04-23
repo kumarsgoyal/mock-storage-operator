@@ -146,10 +146,10 @@ Deploy on **both clusters**:
 
 ```bash
 # Deploy on primary cluster
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context primary
+kubectl apply -k 'https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage' --context primary
 
 # Deploy on secondary cluster
-kubectl apply -k https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage --context secondary
+kubectl apply -k 'https://github.com/BenamarMk/mock-storage-operator/config/default?ref=agnostic-storage' --context secondary
 ```
 
 **What this deploys:**
