@@ -205,9 +205,18 @@ func (r *VolumeGroupReplicationReconciler) reconcilePrimary(
 	vgr.Status.PersistentVolumeClaimsRefList = protectedPVCs
 	vgr.Status.LastSyncTime = latestSync
 	vgr.Status.ObservedGeneration = vgr.Generation
-	setCondition(&vgr.Status.Conditions, "Ready", len(protectedPVCs) > 0,
-		"ReplicationSourcesCreated",
-		fmt.Sprintf("%d ReplicationSource(s) active", len(protectedPVCs)))
+	
+	// Set Completed condition
+	setCondition(&vgr.Status.Conditions, "Completed", true,
+		"Promoted",
+		"volume group is promoted to primary and replicating to secondary",
+		vgr.Generation)
+	
+	// Set Validated condition
+	setCondition(&vgr.Status.Conditions, "Validated", true,
+		"PrerequisiteMet",
+		"volume group is validated and met all prerequisites",
+		vgr.Generation)
 
 	if err := r.Status().Update(ctx, vgr); err != nil {
 		return ctrl.Result{}, err
@@ -388,7 +397,7 @@ func (r *VolumeGroupReplicationReconciler) reconcileSecondary(
 	if !allReady {
 		msg = "waiting for service addresses to be assigned"
 	}
-	setCondition(&vgr.Status.Conditions, "Ready", allReady, "ReplicationDestinationsReady", msg)
+	setCondition(&vgr.Status.Conditions, "Ready", allReady, "ReplicationDestinationsReady", msg, vgr.Generation)
 
 	if err := r.Status().Update(ctx, vgr); err != nil {
 		return ctrl.Result{}, err
@@ -465,7 +474,7 @@ func isVolSyncOwned(pvc *corev1.PersistentVolumeClaim) bool {
 	return false
 }
 
-func setCondition(conditions *[]metav1.Condition, condType string, status bool, reason, message string) {
+func setCondition(conditions *[]metav1.Condition, condType string, status bool, reason, message string, observedGeneration int64) {
 	s := metav1.ConditionFalse
 	if status {
 		s = metav1.ConditionTrue
@@ -477,7 +486,7 @@ func setCondition(conditions *[]metav1.Condition, condType string, status bool, 
 			(*conditions)[i].Reason = reason
 			(*conditions)[i].Message = message
 			(*conditions)[i].LastTransitionTime = now
-			(*conditions)[i].ObservedGeneration = 0 // VGR doesn't track this in conditions
+			(*conditions)[i].ObservedGeneration = observedGeneration
 			return
 		}
 	}
@@ -487,7 +496,7 @@ func setCondition(conditions *[]metav1.Condition, condType string, status bool, 
 		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: now,
-		ObservedGeneration: 0,
+		ObservedGeneration: observedGeneration,
 	})
 }
 
