@@ -308,7 +308,7 @@ metadata:
     ramendr.openshift.io/storageid: mock-storage-id
     ramendr.openshift.io/global: "true"
 spec:
-  provisioner: k8s.io/minikube-hostpath
+  provisioner: kubernetes.io/no-provisioner
   parameters:
     # Default scheduling interval (can be overridden per-PVC via annotations)
     schedulingInterval: "5m"
@@ -339,7 +339,7 @@ metadata:
     ramendr.openshift.io/storageid: mock-storage-id
     ramendr.openshift.io/global: "true"
 spec:
-  provisioner: k8s.io/minikube-hostpath
+  provisioner: kubernetes.io/no-provisioner
   parameters:
     schedulingInterval: "5m"
     capacity: "10Gi"

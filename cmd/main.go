@@ -31,20 +31,34 @@ func init() {
 	utilruntime.Must(volsyncv1alpha1.AddToScheme(scheme))
 }
 
+// getEnvOrDefault returns the value of an environment variable or a default value if not set
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 func main() {
 	var metricsAddr string
 	var probeAddr string
 	var enableLeaderElection bool
+	var provisionerName string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Address for the metrics endpoint.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Address for the health probe endpoint.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for high availability.")
+	flag.StringVar(&provisionerName, "provisioner-name",
+		getEnvOrDefault("PROVISIONER_NAME", "kubernetes.io/no-provisioner"),
+		"Storage provisioner name to watch for VGR resources. Can also be set via PROVISIONER_NAME environment variable.")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	setupLog.Info("mock-storage-operator configuration", "provisioner", provisionerName)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
@@ -79,8 +93,9 @@ func main() {
 	}
 
 	if err = (&controller.VolumeGroupReplicationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		ProvisionerName: provisionerName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeGroupReplication")
 		os.Exit(1)

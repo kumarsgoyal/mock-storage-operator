@@ -13,7 +13,9 @@ metadata:
   name: mock-vgr-class
 spec:
   # Provisioner name that the mock-storage-operator watches for
-  provisioner: k8s.io/minikube-hostpath
+  # Must match the PROVISIONER_NAME environment variable in the operator deployment
+  # Default: kubernetes.io/no-provisioner
+  provisioner: kubernetes.io/no-provisioner
   
   parameters:
     # Default capacity for ReplicationDestinations

@@ -31,6 +31,9 @@ spec:
             - --leader-elect
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
+          env:
+            - name: PROVISIONER_NAME
+              value: "kubernetes.io/no-provisioner"
           ports:
             - name: metrics
               containerPort: 8080

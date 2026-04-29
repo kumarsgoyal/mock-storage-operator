@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	requeueInterval     = 30 * time.Second
-	vgrFinalizer        = "mock.storage.io/volumegroupreplication"
-	mockProvisionerName = "k8s.io/minikube-hostpath"
-	remoteAddressKey    = "mock.storage.io/remote-address"
-	remoteKeySecretKey  = "mock.storage.io/remote-key-secret"
+	requeueInterval    = 30 * time.Second
+	vgrFinalizer       = "mock.storage.io/volumegroupreplication"
+	remoteAddressKey   = "mock.storage.io/remote-address"
+	remoteKeySecretKey = "mock.storage.io/remote-key-secret"
 )
 
 // VolumeGroupReplicationReconciler reconciles VolumeGroupReplication objects
 type VolumeGroupReplicationReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme          *runtime.Scheme
+	ProvisionerName string
 }
 
 // +kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumegroupreplications,verbs=get;list;watch;create;update;patch;delete
@@ -62,9 +62,11 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
-	// Check if this VGR is for our provisioner (k8s.io/minikube-hostpath)
-	if vgrClass.Spec.Provisioner != mockProvisionerName {
-		logger.V(1).Info("VGR not for this provisioner, skipping", "provisioner", vgrClass.Spec.Provisioner)
+	// Check if this VGR is for our provisioner
+	if vgrClass.Spec.Provisioner != r.ProvisionerName {
+		logger.V(1).Info("VGR not for this provisioner, skipping",
+			"provisioner", vgrClass.Spec.Provisioner,
+			"expected", r.ProvisionerName)
 		return ctrl.Result{}, nil
 	}
 

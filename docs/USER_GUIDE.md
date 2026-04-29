@@ -113,6 +113,42 @@ kubectl apply -k 'https://github.com/BenamarMk/mock-storage-operator/config/defa
 - Deploys ServiceAccount, ClusterRole, and ClusterRoleBinding
 - Deploys the operator pod using `quay.io/bmekhiss/mock-storage-operator:latest`
 
+#### Configuring the Provisioner (Optional)
+
+By default, the operator watches for VGRs with the `kubernetes.io/no-provisioner` provisioner. To use a different provisioner:
+
+**Option 1: Environment Variable (Recommended)**
+
+Edit the deployment to set the `PROVISIONER_NAME` environment variable:
+
+```yaml
+env:
+  - name: PROVISIONER_NAME
+    value: "your.custom.provisioner"
+```
+
+**Option 2: Command-Line Flag**
+
+Add the `--provisioner-name` flag to the container args:
+
+```yaml
+args:
+  - --leader-elect
+  - --provisioner-name=your.custom.provisioner
+```
+
+**Common Provisioner Values:**
+- `kubernetes.io/no-provisioner` - Default, for static PVs and local storage
+- `k8s.io/minikube-hostpath` - Minikube hostPath provisioner
+- `topolvm.io` - TopoLVM provisioner
+- `kubernetes.io/gce-pd` - Google Compute Engine Persistent Disk
+- `kubernetes.io/aws-ebs` - AWS Elastic Block Store
+- Custom LSO (Local Storage Operator) provisioner names
+
+> [!NOTE]
+> The provisioner configured in the operator must match the `spec.provisioner` field in your VolumeGroupReplicationClass resources.
+
+
 **Verify deployment:**
 ```bash
 # Check operator pod is running
@@ -171,7 +207,7 @@ metadata:
     ramendr.openshift.io/global: "true"  # Marks this as a global VGRClass
   name: mock-vgr-class
 spec:
-  provisioner: k8s.io/minikube-hostpath  # Use LSO provisioner if using Red Hat Local Storage Operator
+  provisioner: kubernetes.io/no-provisioner  # Use LSO provisioner if using Red Hat Local Storage Operator
   parameters:
     schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
 ```
@@ -192,7 +228,7 @@ metadata:
     # No global label - this is namespace-scoped
   name: mock-vgr-class-ns
 spec:
-  provisioner: k8s.io/minikube-hostpath  # Use LSO provisioner if using Red Hat Local Storage Operator
+  provisioner: kubernetes.io/no-provisioner  # Use LSO provisioner if using Red Hat Local Storage Operator
   parameters:
     schedulingInterval: "5m"  # Use "0m" for Metro, ">0m" for Regional DR
 ```
@@ -208,7 +244,8 @@ kubectl get volumegroupreplicationclass
 ```
 
 > [!NOTE]
-> - **provisioner**: Use `k8s.io/minikube-hostpath` for testing. If using Red Hat Local Storage Operator (LSO), use the LSO provisioner name instead.
+> - The operator processes VGRs for both global and non-global VGRClasses as long as the provisioner matches the configured value.
+> - **provisioner**: Must match the `PROVISIONER_NAME` environment variable in the operator deployment (default: `kubernetes.io/no-provisioner`). Common values include `kubernetes.io/no-provisioner` for static PVs, `k8s.io/minikube-hostpath` for Minikube, or custom LSO provisioner names.
 > - **schedulingInterval**: Set to `"0m"` for Metro (synchronous replication), or a value greater than `"0m"` (e.g., `"5m"`) for Regional DR (asynchronous replication).
 
 ---
@@ -541,7 +578,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: mock-vgr-class
 spec:
-  provisioner: k8s.io/minikube-hostpath
+  provisioner: kubernetes.io/no-provisioner
   parameters:
     schedulingInterval: "5m"
     capacity: "10Gi"
@@ -628,7 +665,7 @@ parameters:
    metadata:
      name: mock-vgr-class
    spec:
-     provisioner: k8s.io/minikube-hostpath
+     provisioner: kubernetes.io/no-provisioner
      parameters:
        capacity: "10Gi"
        pvc=mysql-data/myapp: "schedulingInterval=5m:storageClassName=standard:consistencyGroup=test-group-1"
@@ -720,7 +757,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: mock-vgr-class
 spec:
-  provisioner: k8s.io/minikube-hostpath
+  provisioner: kubernetes.io/no-provisioner
   parameters:
     capacity: "10Gi"
     # Database - critical, sync every 5 minutes
@@ -971,7 +1008,7 @@ kind: VolumeGroupReplicationClass
 metadata:
   name: demo-vgr-class
 spec:
-  provisioner: k8s.io/minikube-hostpath
+  provisioner: kubernetes.io/no-provisioner
   parameters:
     capacity: "5Gi"
     pvc=demo-data/demo-app: "schedulingInterval=3m:storageClassName=standard:consistencyGroup=demo-group"
